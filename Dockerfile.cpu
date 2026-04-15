@@ -1,0 +1,244 @@
+#-------------------------------------------------------------------------------
+# Settings
+
+# Webtop settings
+ARG WEBTOP_IMAGE=ubuntu-xfce-version-72e3d355
+ARG DEFAULT_USERNAME=abc
+ARG DEFAULT_PASSWORD=abc
+ARG WGET_ARGS="-q --show-progress --progress=bar:force:noscroll"
+
+# Library versions
+ARG PYTHON_VERSION=3.12
+ARG PYTHON_TORCH_VERSION=2.11.0
+ARG PYTHON_TF_VERSION=2.21.0
+ARG PYTHON_MUJOCO_VERSION=3.7.0
+ARG PYTHON_GYMNASIUM_VERSION=1.2.3
+ARG PYTHON_JUPYTERLAB_VERSION=4.5.6
+ARG PYTHON_TENSORBOARD_VERSION=2.20.0
+ARG PYTHON_MEDIAPY_VERSION=1.2.6
+ARG PYTHON_MATPLOTLIB_VERSION=3.10.8
+ARG VS_CODE_EXT_PYTHON_VERSION=2026.5.2026032701
+ARG VS_CODE_EXT_JUPYTER_VERSION=2025.10.2026040301
+
+#-------------------------------------------------------------------------------
+# Base image and dependencies
+
+FROM linuxserver/webtop:${WEBTOP_IMAGE}
+
+# Redeclare arguments after FROM
+ARG DEFAULT_USERNAME
+ARG DEFAULT_PASSWORD
+ARG TARGETARCH
+ARG WGET_ARGS
+ARG PYTHON_VERSION
+ARG PYTHON_TORCH_VERSION
+ARG PYTHON_TF_VERSION
+ARG PYTHON_MUJOCO_VERSION
+ARG PYTHON_GYMNASIUM_VERSION
+ARG PYTHON_JUPYTERLAB_VERSION
+ARG PYTHON_TENSORBOARD_VERSION
+ARG PYTHON_MEDIAPY_VERSION
+ARG PYTHON_MATPLOTLIB_VERSION
+ARG VS_CODE_EXT_PYTHON_VERSION
+ARG VS_CODE_EXT_JUPYTER_VERSION
+
+SHELL ["/bin/bash", "-c"]
+
+# Verify CPU architecture
+RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
+        echo "Architecture $TARGETARCH is supported."; \
+    else \
+        echo "Unsupported architecture: $TARGETARCH"; \
+        exit 1; \
+    fi
+
+# Install base packages + pyenv build dependencies
+RUN apt-get -y update && \
+    apt-get -y install \
+        build-essential \
+        ca-certificates \
+        curl \
+        ffmpeg \
+        git \
+        gpg \
+        libbz2-dev \
+        libegl1-mesa-dev \
+        libffi-dev \
+        libgl1-mesa-dev \
+        libgles2-mesa-dev \
+        libglfw3 \
+        libglfw3-dev \
+        liblzma-dev \
+        libncursesw5-dev \
+        libosmesa6 \
+        libosmesa6-dev \
+        libreadline-dev \
+        libsqlite3-dev \
+        libssl-dev \
+        locales \
+        nano \
+        software-properties-common \
+        tk-dev \
+        wget \
+        xz-utils \
+        zlib1g-dev
+
+# Clean up apt cache
+RUN apt-get clean -y && \
+    apt-get autoremove --purge -y && \
+    rm -rf /var/lib/apt/lists/*
+
+#-------------------------------------------------------------------------------
+# Users and workspace
+
+RUN locale-gen en_US.UTF-8 && \
+    update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+RUN echo "${DEFAULT_USERNAME}:${DEFAULT_PASSWORD}" | chpasswd
+
+RUN mkdir -p /config/workspaces && \
+    chown -R ${DEFAULT_USERNAME}:${DEFAULT_USERNAME} /config/workspaces && \
+    chmod -R 0777 /config/workspaces
+
+#-------------------------------------------------------------------------------
+# Install Pyenv and the specified Python version
+
+ENV PYENV_ROOT="/opt/pyenv"
+ENV PATH="${PYENV_ROOT}/bin:${PYENV_ROOT}/shims:${PATH}"
+
+RUN git clone https://github.com/pyenv/pyenv.git "${PYENV_ROOT}" && \
+    "${PYENV_ROOT}/bin/pyenv" install ${PYTHON_VERSION} && \
+    "${PYENV_ROOT}/bin/pyenv" global ${PYTHON_VERSION} && \
+    python -m pip install --upgrade pip setuptools wheel && \
+    chown -R ${DEFAULT_USERNAME}:${DEFAULT_USERNAME} "${PYENV_ROOT}"
+
+#-------------------------------------------------------------------------------
+# Python virtual environment
+
+RUN python -m venv /opt/rl-env && \
+    /opt/rl-env/bin/python -m pip install --upgrade pip setuptools wheel && \
+    chown -R ${DEFAULT_USERNAME}:${DEFAULT_USERNAME} /opt/rl-env
+
+# PyTorch (CPU)
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+        /opt/rl-env/bin/pip install \
+            torch==${PYTHON_TORCH_VERSION} \
+            --index-url https://download.pytorch.org/whl/cpu; \
+    else \
+        /opt/rl-env/bin/pip install \
+            torch==${PYTHON_TORCH_VERSION}; \
+    fi
+
+# TensorFlow CPU, MuJoCo, and RL libraries
+RUN /opt/rl-env/bin/pip install \
+    tensorflow-cpu==${PYTHON_TF_VERSION} \
+    mujoco==${PYTHON_MUJOCO_VERSION} \
+    "gymnasium[mujoco]==${PYTHON_GYMNASIUM_VERSION}" \
+    tensorboard==${PYTHON_TENSORBOARD_VERSION} \
+    mediapy==${PYTHON_MEDIAPY_VERSION} \
+    matplotlib==${PYTHON_MATPLOTLIB_VERSION}
+
+# Install JupyterLab and register the venv as a kernel
+RUN /opt/rl-env/bin/pip install \
+        jupyterlab==${PYTHON_JUPYTERLAB_VERSION} \
+        ipykernel && \
+    /opt/rl-env/bin/python -m ipykernel install \
+        --name rl-env \
+        --display-name "Python (RL)"
+
+# Activate the venv automatically in interactive bash sessions
+RUN echo 'export PYENV_ROOT="/opt/pyenv"' >> /root/.bashrc && \
+    echo 'export PATH="/opt/pyenv/bin:/opt/pyenv/shims:$PATH"' >> /root/.bashrc && \
+    echo 'eval "$(pyenv init - bash)"' >> /root/.bashrc && \
+    echo 'source /opt/rl-env/bin/activate' >> /root/.bashrc && \
+    mkdir -p /config && \
+    echo 'export PYENV_ROOT="/opt/pyenv"' >> /config/.bashrc && \
+    echo 'export PATH="/opt/pyenv/bin:/opt/pyenv/shims:$PATH"' >> /config/.bashrc && \
+    echo 'eval "$(pyenv init - bash)"' >> /config/.bashrc && \
+    echo 'source /opt/rl-env/bin/activate' >> /config/.bashrc
+
+RUN chmod -R 0775 /opt/rl-env && \
+    chmod -R 0775 /opt/pyenv
+
+#-------------------------------------------------------------------------------
+# MuJoCo rendering
+
+ENV MUJOCO_GL=glfw
+ENV PYOPENGL_PLATFORM=glx
+
+#-------------------------------------------------------------------------------
+# JupyterLab
+
+RUN mkdir -p /root/.jupyter /config/.jupyter
+COPY scripts/jupyter-lab-config.py /root/.jupyter/jupyter-lab_config.py
+RUN cp /root/.jupyter/jupyter-lab_config.py /config/.jupyter/jupyter-lab-config.py && \
+    chmod -R 0777 /config/.jupyter
+
+#-------------------------------------------------------------------------------
+# VS Code
+
+RUN cd /tmp && \
+    wget -qO- https://packages.microsoft.com/keys/microsoft.asc | \
+        gpg --dearmor > packages.microsoft.gpg && \
+    install -D -o root -g root -m 644 packages.microsoft.gpg \
+        /etc/apt/keyrings/packages.microsoft.gpg && \
+    echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] \
+        https://packages.microsoft.com/repos/code stable main" | \
+        tee /etc/apt/sources.list.d/vscode.list > /dev/null && \
+    rm -f packages.microsoft.gpg
+
+RUN apt-get update && \
+    apt-get install -y apt-transport-https code && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV DONT_PROMPT_WSL_INSTALL=true
+
+RUN mkdir -p /tmp/vscode-extensions && \
+    cd /tmp/vscode-extensions && \
+    wget --compression=gzip ${WGET_ARGS} \
+        https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-python/vsextensions/python/${VS_CODE_EXT_PYTHON_VERSION}/vspackage \
+        -O python.vsix && \
+    wget --compression=gzip ${WGET_ARGS} \
+        https://marketplace.visualstudio.com/_apis/public/gallery/publishers/ms-toolsai/vsextensions/jupyter/${VS_CODE_EXT_JUPYTER_VERSION}/vspackage \
+        -O jupyter.vsix
+
+RUN cd /tmp/vscode-extensions && \
+    code --install-extension python.vsix --force --user-data-dir /root/.vscode-root --no-sandbox && \
+    code --install-extension jupyter.vsix --force --user-data-dir /root/.vscode-root --no-sandbox
+
+RUN rm -rf /tmp/vscode-extensions
+
+RUN mkdir -p /config/.vscode
+COPY scripts/vscode-settings.json /config/.vscode/settings.json
+
+RUN chmod -R 0777 /config/.vscode && \
+    mkdir -p /config/.cache && \
+    chown -R ${DEFAULT_USERNAME}:${DEFAULT_USERNAME} /config/.cache && \
+    chmod -R 0777 /config/.cache
+
+#-------------------------------------------------------------------------------
+# Desktop customization
+
+# Copy the config script
+RUN mkdir -p /config/.config/autostart
+COPY scripts/xfce-config.sh /usr/local/bin/xfce-config.sh
+RUN chmod +x /usr/local/bin/xfce-config.sh
+
+# Copy launcher
+COPY scripts/xfce-config.desktop /config/.config/autostart/xfce-config.desktop
+RUN chmod 644 /config/.config/autostart/xfce-config.desktop && \
+    chown -R ${DEFAULT_USERNAME}:${DEFAULT_USERNAME} /config/.config /usr/local/bin/xfce-config.sh
+
+#-------------------------------------------------------------------------------
+# Entrypoint
+
+# Expose ports
+EXPOSE 8888
+
+# Copy in entrypoint script
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

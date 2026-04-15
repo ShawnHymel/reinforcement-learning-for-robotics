@@ -1,0 +1,39 @@
+# Barebones Webtop image for testing
+#
+# Build: docker build -t webtop -f Dockerfile.bare .
+# Run: docker run -it --rm -p 3000:3000 webtop
+# Connect: http://localhost:3000
+
+# Image
+ARG WEBTOP_IMAGE=ubuntu-xfce-version-72e3d355
+FROM linuxserver/webtop:${WEBTOP_IMAGE}
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    build-essential \
+    curl \
+    libssl-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libncursesw5-dev \
+    xz-utils \
+    tk-dev \
+    libffi-dev \
+    liblzma-dev \
+    ca-certificates \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install pyenv system-wide
+ENV PYENV_ROOT="/opt/pyenv"
+ENV PATH="${PYENV_ROOT}/bin:${PYENV_ROOT}/shims:${PATH}"
+RUN git clone https://github.com/pyenv/pyenv.git $PYENV_ROOT
+
+# Install Python 3.12 and set as global default
+RUN pyenv install 3.12.3 && \
+    pyenv global 3.12.3
+
+# Upgrade pip
+RUN python -m pip install --upgrade pip

@@ -1,0 +1,4 @@
+{
+    "python.defaultInterpreterPath": "/opt/rl-env/bin/python",
+    "jupyter.notebookFileRoot": "/config/workspaces"
+}

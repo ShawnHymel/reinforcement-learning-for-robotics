@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=XFCE Config
+Exec=/usr/local/bin/xfce-config.sh
+StartupNotify=false
+Terminal=false
+OnlyShowIn=XFCE;
