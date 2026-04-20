@@ -13,5 +13,5 @@ docker build -t rl-robotics -f Dockerfile.cpu .
 Run the image:
 
 ```sh
-docker run -it --rm -p 3000:3000 rl-robotics
+docker run -it --rm -p 3000:3000 -v "${PWD}/workspace:/workspace" rl-robotics
 ```

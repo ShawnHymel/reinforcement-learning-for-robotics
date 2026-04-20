@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mujoco model="bala2">
+
+  <!-- ============================================================== -->
+  <!-- COMPILER: how MuJoCo interprets the file                         -->
+  <!-- ============================================================== -->
+  <compiler angle="radian"
+            coordinate="local"
+            meshdir="meshes"
+            autolimits="true"/>
+
+  <!-- ============================================================== -->
+  <!-- OPTIONS: global simulation settings                              -->
+  <!-- ============================================================== -->
+  <option timestep="0.002"
+          gravity="0 0 -9.81"
+          integrator="implicitfast"/>
+
+  <!-- ============================================================== -->
+  <!-- DEFAULTS: shared properties for elements                         -->
+  <!-- ============================================================== -->
+  <default>
+    <!-- Geometry defaults: solid surfaces with reasonable friction -->
+    <geom contype="1" conaffinity="1" friction="0.8 0.005 0.0001"
+          rgba="0.7 0.7 0.7 1"/>
+
+    <!-- Joint defaults: small damping for numerical stability -->
+    <joint damping="0.001" frictionloss="0.001"/>
+
+    <!-- Actuator defaults (will be overridden per-actuator) -->
+    <motor ctrlrange="-0.5 0.5" ctrllimited="true"/>
+  </default>
+
+  <!-- ============================================================== -->
+  <!-- ASSETS: meshes and visual textures                               -->
+  <!-- ============================================================== -->
+  <asset>
+    <mesh name="chassis_mesh"     file="chassis.stl"     scale="0.001 0.001 0.001"/>
+    <mesh name="wheel_left_mesh"  file="wheel_left.stl"  scale="0.001 0.001 0.001"/>
+    <mesh name="wheel_right_mesh" file="wheel_right.stl" scale="0.001 0.001 0.001"/>
+
+    <!-- Sky and ground textures for nicer rendering -->
+    <texture type="skybox" builtin="gradient" rgb1="0.5 0.7 1" rgb2="0.95 0.95 1"
+             width="256" height="256"/>
+    <texture name="grid" type="2d" builtin="checker"
+             rgb1="0.2 0.3 0.4" rgb2="0.3 0.4 0.5"
+             width="512" height="512" mark="cross" markrgb="0.8 0.8 0.8"/>
+    <material name="grid" texture="grid" texrepeat="5 5" reflectance="0.2"/>
+  </asset>
+
+  <!-- ============================================================== -->
+  <!-- WORLDBODY: the world and everything in it                        -->
+  <!-- ============================================================== -->
+  <worldbody>
+
+    <!-- Lighting -->
+    <light pos="0 0 1.5" dir="0 0 -1" diffuse="0.8 0.8 0.8"/>
+
+    <!-- Camera (third-person view of the robot) -->
+    <camera name="trackcam" pos="0.3 -0.3 0.15" xyaxes="1 1 0 -0.3 0.3 1"
+            mode="trackcom"/>
+
+    <!-- Ground plane at z=0, infinite extent, with grid texture -->
+    <geom name="ground" type="plane" size="0 0 0.1" material="grid"
+          friction="0.8 0.005 0.0001"/>
+
+    <!-- ============================================================ -->
+    <!-- THE ROBOT                                                      -->
+    <!-- Chassis is positioned so the wheels (radius 0.0175m) touch     -->
+    <!-- the ground. With chassis link frame at wheel-axle height, the  -->
+    <!-- chassis origin sits at z = wheel radius = 0.0175m.             -->
+    <!-- ============================================================ -->
+    <body name="chassis" pos="0 0 0.0175">
+
+      <!-- Free joint: lets the chassis translate and rotate freely
+           in the world. Without this, the body would be welded to
+           its initial pose. -->
+      <freejoint name="root"/>
+
+      <!-- Visual + collision geometry -->
+      <geom name="chassis_geom" type="mesh" mesh="chassis_mesh"
+            rgba="0.3 0.3 0.4 1"/>
+
+      <!-- Inertial properties (from BodyInertial extraction) -->
+      <inertial pos="0 0 0.018" mass="0.125000"
+                diaginertia="0.000059379 0.000056717 0.000057370"/>
+
+      <!-- Site for IMU sensor: small marker at the IMU's physical
+           location. The MPU6886 on the M5StickC sits roughly at the
+           top of the chassis; we'll approximate it 30mm above origin. -->
+      <site name="imu_site" pos="0 0 0.03" size="0.005"
+            rgba="1 0 0 0.5"/>
+
+      <!-- Left wheel -->
+      <body name="wheel_left" pos="0 0.0355 0">
+        <joint name="left_wheel_joint" type="hinge" axis="0 1 0"
+               damping="0.001" frictionloss="0.001"/>
+        <geom name="wheel_left_geom" type="mesh" mesh="wheel_left_mesh"
+              rgba="0.1 0.1 0.1 1"
+              friction="1.0 0.005 0.0001"/>
+        <inertial pos="0 0 0" mass="0.017000"
+                  diaginertia="0.000001620 0.000002603 0.000001620"/>
+      </body>
+
+      <!-- Right wheel -->
+      <body name="wheel_right" pos="0 -0.0355 0">
+        <joint name="right_wheel_joint" type="hinge" axis="0 1 0"
+               damping="0.001" frictionloss="0.001"/>
+        <geom name="wheel_right_geom" type="mesh" mesh="wheel_right_mesh"
+              rgba="0.1 0.1 0.1 1"
+              friction="1.0 0.005 0.0001"/>
+        <inertial pos="0 0 0" mass="0.017000"
+                  diaginertia="0.000001620 0.000002603 0.000001620"/>
+      </body>
+
+    </body>
+
+  </worldbody>
+
+  <!-- ============================================================== -->
+  <!-- ACTUATORS: motors driving the wheel joints                       -->
+  <!-- gear=1 means torque is in N·m. Adjust ctrlrange to match real    -->
+  <!-- motor limits (N20 motors are roughly 0.05-0.2 N·m peak).         -->
+  <!-- ============================================================== -->
+  <actuator>
+    <motor name="left_motor"  joint="left_wheel_joint"  gear="1"
+           ctrlrange="-0.1 0.1"/>
+    <motor name="right_motor" joint="right_wheel_joint" gear="1"
+           ctrlrange="-0.1 0.1"/>
+  </actuator>
+
+  <!-- ============================================================== -->
+  <!-- SENSORS: IMU and encoders                                        -->
+  <!-- All attach to the imu_site or to the joints directly.            -->
+  <!-- ============================================================== -->
+  <sensor>
+    <!-- IMU sensors at imu_site (approximates the MPU6886) -->
+    <gyro          name="imu_gyro"       site="imu_site"/>
+    <accelerometer name="imu_accel"      site="imu_site"/>
+    <framequat     name="imu_orientation" objtype="site" objname="imu_site"/>
+
+    <!-- Wheel encoders (joint position & velocity) -->
+    <jointpos name="left_wheel_pos"  joint="left_wheel_joint"/>
+    <jointpos name="right_wheel_pos" joint="right_wheel_joint"/>
+    <jointvel name="left_wheel_vel"  joint="left_wheel_joint"/>
+    <jointvel name="right_wheel_vel" joint="right_wheel_joint"/>
+  </sensor>
+
+</mujoco>

@@ -6,14 +6,17 @@ Usage
 ---
 Typical usage in FreeCAD's Python console:
 
+    from pathlib import Path
+    SCRIPTS_PATH = Path('/path/to/scripts')
+
     import sys
-    sys.path.insert(0, '/path/to/scripts')
+    sys.path.insert(0, str(SCRIPTS_PATH))
     import inertia_utils
 
     # Option 1: Use the Shape's material density and FreeCAD's geometric CoM
     chassis = inertia_utils.BodyInertial('chassis')
 
-    # Option 2: Provide measured mass and measured center of mass (CoM)
+    # Option 2: Provide measured mass (kg) and measured center of mass (m)
     chassis = inertia_utils.BodyInertial('chassis',
                                          measured_mass=0.125,
                                          measured_com=(0.0, 0.0, 0.018))
@@ -50,6 +53,16 @@ import FreeCAD as App
 class BodyInertial:
     """Inertial properties of a FreeCAD body for URDF/MJCF export.
 
+    Output frame:
+     * If rpy_degrees is provided, all output values (CoM, inertia tensor,
+        placement) are returned in a frame rotated from FreeCAD's by the
+        given Euler angles. This should match the rotation applied to the
+        exported mesh (mesh_export.export_body's rpy_degrees) so the URDF
+        sees consistent geometry and inertia.
+     * The measured_com argument, if given, is interpreted in FreeCAD's
+        original frame (before rotation), since that's the frame in which
+        the user typically measures and creates a model.
+
     Parameters
     ----------
     label : str
@@ -57,13 +70,34 @@ class BodyInertial:
     measured_mass : float, optional
         Empirically measured mass in kg. Overrides material-derived mass.
     measured_com : (x, y, z) tuple, optional
-        Empirically measured CoM in meters, in the body's local frame.
-        Overrides the geometric centroid.
+        Empirically measured CoM in meters, in the body's local frame (i.e. from
+        the local body's origin point in FreeCAD). Overrides the geometric 
+        centroid.
+    rpy_degrees : (roll, pitch, yaw) tuple, optional
+        Rotation applied to all output values to remap from FreeCAD's frame
+        to a target frame. Uses URDF's extrinsic XYZ convention, in degrees.
+        Must match the rotation passed to mesh_export.export_body to keep
+        meshes and inertia consistent.
+        Example: rpy_degrees=(0, 0, -90) remaps FreeCAD (X=axle, Y=fwd) to
+        ROS (X=fwd, Y=left).
     """
-    def __init__(self, label, measured_mass=None, measured_com=None):
+    def __init__(
+        self, 
+        label, 
+        measured_mass=None, 
+        measured_com=None, 
+        rpy_degrees=None
+    ):
         """Constructor"""
         self._label        = label
         self._measured_com = tuple(measured_com) if measured_com else None
+        self._rpy_degrees  = tuple(rpy_degrees) if rpy_degrees else None
+
+        # Build a 3x3 rotation matrix for output transforms (or None)
+        if self._rpy_degrees is not None:
+            self._R = self._build_rotation_matrix(*self._rpy_degrees)
+        else:
+            self._R = None
 
         self._extract_from_freecad()
         self._resolve_mass(measured_mass)
@@ -82,16 +116,16 @@ class BodyInertial:
         shape_local = self._obj.Shape.copy()
         shape_local.Placement = App.Placement()
 
-        # Volume, mm³ → m³
+        # Volume, mm^3 to m^3
         self._volume = shape_local.Volume * 1e-9
 
-        # Geometric CoM in local frame, mm → m
+        # Geometric CoM in local frame, mm to m
         com_mm = shape_local.CenterOfMass
         self._geometric_com = self._clean_com(
             (com_mm.x * 1e-3, com_mm.y * 1e-3, com_mm.z * 1e-3)
         )
 
-        # FreeCAD's inertia tensor: g·mm² at unit density (1 g/mm³),
+        # FreeCAD's inertia tensor: g*mm^2 at unit density (1 g/mm^3),
         # computed ABOUT THE GEOMETRIC CoM, with axes parallel to local frame.
         M = shape_local.MatrixOfInertia
         self._raw_moi_matrix = [
@@ -100,7 +134,7 @@ class BodyInertial:
             [M.A31, M.A32, M.A33],
         ]
 
-        # Placement (body origin in parent frame), mm → m
+        # Placement (body origin in parent frame), mm to m
         p = self._obj.Placement.Base
         self._placement = (p.x * 1e-3, p.y * 1e-3, p.z * 1e-3)
 
@@ -126,7 +160,7 @@ class BodyInertial:
 
     @staticmethod
     def _detect_density(obj):
-        """Read density (kg/m³) from the body's ShapeMaterial, or None."""
+        """Read density (kg/m^3) from the body's ShapeMaterial, or None."""
         if not hasattr(obj, 'ShapeMaterial'):
             return None
         mat = obj.ShapeMaterial
@@ -162,13 +196,13 @@ class BodyInertial:
         """Build final inertia tensor consistent with the chosen mass & CoM.
 
         Pipeline:
-          1. Scale FreeCAD's raw tensor (g·mm² at unit density, about the
+          1. Scale FreeCAD's raw tensor (g*mm^2 at unit density, about the
              geometric CoM) to SI units at the chosen mass.
           2. If measured_com was given, shift the tensor from the geometric
              CoM to the measured CoM using the parallel axis theorem.
           3. Also compute the tensor about the local origin (diagnostic).
         """
-        # Step 1: pick the claimed CoM
+        # Pick the claimed CoM
         if self._measured_com is not None:
             self._local_com  = tuple(float(c) for c in self._measured_com)
             self._com_source = 'measured'
@@ -176,20 +210,20 @@ class BodyInertial:
             self._local_com  = self._geometric_com
             self._com_source = 'geometric'
 
-        # Step 2: scale raw tensor to SI at the chosen mass.
+        # Scale raw tensor to SI at the chosen mass.
         # Unit derivation:
-        #   FreeCAD raw: g·mm² at unit density 1 g/mm³
-        #   To get kg·m² at real mass, we scale by (real_mass_g / V_mm³)
-        #   and convert units (g·mm² → kg·m², factor 1e-9).
-        #   Combined: scale = mass_kg * 1e-15 / V_m³
+        #   FreeCAD raw: g*mm^2 at unit density 1 g/mm^3
+        #   To get kg*m^2 at real mass, we scale by (real_mass_g / V_mm^3)
+        #   and convert units (g*mm^2 to kg*m^2, factor 1e-9).
+        #   Combined: scale = mass_kg * 1e-15 / V_m^3
         scale = self._mass * 1e-15 / self._volume
         tensor_at_geom_com = [[v * scale for v in row]
                               for row in self._raw_moi_matrix]
 
-        # Step 3: if the claimed CoM differs from the geometric CoM, shift
+        # If the claimed CoM differs from the geometric CoM, shift
         # the tensor to be expressed about the claimed (measured) CoM.
         # The parallel axis theorem in "away from CoM" direction:
-        #   I_P = I_com + m · (|d|² I₃ − d dᵀ)   where d = P − CoM
+        #   I_P = I_com + m * (|d|^2 I_3 − d dᵀ)   where d = P − CoM
         delta = tuple(self._local_com[i] - self._geometric_com[i]
                       for i in range(3))
         if any(abs(d) > 1e-9 for d in delta):
@@ -201,12 +235,29 @@ class BodyInertial:
 
         self._moi_com = self._clean_matrix(tensor_at_claimed_com)
 
-        # Step 4: for diagnostic purposes, also compute I about the local
+        # For diagnostic purposes, also compute I about the local
         # origin. Shift from the claimed CoM to the origin.
         self._moi_origin = self._parallel_axis(
             self._moi_com, self._mass, self._local_com, direction=+1
         )
         self._moi_origin = self._clean_matrix(self._moi_origin)
+
+        # Apply output frame rotation if requested. geometric_com is not rotated
+        # as it is used for diagnostics (in FreeCAD frame of reference)
+        if self._R is not None:
+            self._local_com  = self._rotate_vector(self._R, self._local_com)
+            self._placement  = self._rotate_vector(self._R, self._placement)
+            self._moi_com    = self._rotate_tensor(self._R, self._moi_com)
+            self._moi_origin = self._rotate_tensor(self._R, self._moi_origin)
+            
+            # Re-clean noise introduced by the rotation arithmetic
+            self._local_com  = self._clean_com(self._local_com)
+            self._placement  = self._clean_com(self._placement)
+            self._moi_com    = self._clean_matrix(self._moi_com)
+            self._moi_origin = self._clean_matrix(self._moi_origin)
+
+    # --------------------------------------------------------------------------
+    # Math helpers
 
     @staticmethod
     def _parallel_axis(I_ref, mass, d, direction=+1):
@@ -224,7 +275,7 @@ class BodyInertial:
         dx, dy, dz = d
         d2 = dx*dx + dy*dy + dz*dz
 
-        # m · (|d|² I₃ − d dᵀ)
+        # m * (|d|^2 I_3 − d dᵀ)
         shift = [
             [mass * (d2 - dx*dx), mass * (-dx*dy),      mass * (-dx*dz)     ],
             [mass * (-dy*dx),     mass * (d2 - dy*dy),  mass * (-dy*dz)     ],
@@ -233,9 +284,6 @@ class BodyInertial:
         return [[I_ref[i][j] + direction * shift[i][j] for j in range(3)]
                 for i in range(3)]
 
-    # --------------------------------------------------------------------------
-    # Math helpers
-
     @staticmethod
     def _clean_com(com, tol=1e-9):
         """Zero out sub-nanometer noise."""
@@ -243,7 +291,7 @@ class BodyInertial:
 
     @staticmethod
     def _clean_matrix(M, tol=1e-12):
-        """Zero out sub-picokgm² noise."""
+        """Zero out sub-picokgm^2 noise."""
         def clean(x):
             return 0.0 if abs(x) < tol else x
         return [[clean(v) for v in row] for row in M]
@@ -252,6 +300,57 @@ class BodyInertial:
     def _print_matrix(M, indent=""):
         for row in M:
             print(f"{indent}[{row[0]:12.9f}  {row[1]:12.9f}  {row[2]:12.9f}]")
+
+    @staticmethod
+    def _build_rotation_matrix(roll_deg, pitch_deg, yaw_deg):
+        """Build a 3x3 rotation matrix from URDF-style RPY (extrinsic XYZ).
+
+        URDF convention: rotate about world X by roll, then world Y by pitch,
+        then world Z by yaw. As a matrix product applied to a point:
+            R = Rz * Ry * Rx
+        so the final transform on a point p is Rz(Ry(Rx(p))).
+        """
+        cr = math.cos(math.radians(roll_deg))
+        sr = math.sin(math.radians(roll_deg))
+        cp = math.cos(math.radians(pitch_deg))
+        sp = math.sin(math.radians(pitch_deg))
+        cy = math.cos(math.radians(yaw_deg))
+        sy = math.sin(math.radians(yaw_deg))
+
+        Rx = [[1,  0,   0 ],
+            [0,  cr, -sr],
+            [0,  sr,  cr]]
+        Ry = [[ cp, 0, sp],
+            [ 0,  1, 0 ],
+            [-sp, 0, cp]]
+        Rz = [[cy, -sy, 0],
+            [sy,  cy, 0],
+            [0,   0,  1]]
+
+        return BodyInertial._matmul(Rz, BodyInertial._matmul(Ry, Rx))
+
+    @staticmethod
+    def _matmul(A, B):
+        """Multiply two 3x3 matrices (as list-of-lists)."""
+        return [[sum(A[i][k] * B[k][j] for k in range(3))
+                for j in range(3)]
+                for i in range(3)]
+
+    @staticmethod
+    def _rotate_vector(R, v):
+        """Apply rotation R to 3-vector v: returns R * v as a tuple."""
+        return tuple(sum(R[i][k] * v[k] for k in range(3)) for i in range(3))
+
+    @staticmethod
+    def _rotate_tensor(R, T):
+        """Transform a 3x3 second-rank tensor under rotation R: R * T * Rᵀ.
+
+        This is the standard tensor transformation rule. Vectors get one R;
+        tensors get an R on each side because they have two "directional"
+        indices that both need to transform.
+        """
+        Rt = [[R[j][i] for j in range(3)] for i in range(3)]
+        return BodyInertial._matmul(BodyInertial._matmul(R, T), Rt)
 
     def __repr__(self):
         return (f"BodyInertial(label='{self._label}', "
@@ -266,11 +365,11 @@ class BodyInertial:
         return self._label
 
     def get_volume(self):
-        """Volume in m³ (pure geometry)."""
+        """Volume in m^3 (pure geometry)."""
         return self._volume
 
     def get_density(self):
-        """Density in kg/m³, or None if on the measured-mass path."""
+        """Density in kg/m^3, or None if on the measured-mass path."""
         return self._density
 
     def get_mass(self):
@@ -295,11 +394,11 @@ class BodyInertial:
         return self._placement
 
     def get_com_moi(self):
-        """Inertia tensor about the CoM, kg·m². What URDF/MJCF wants."""
+        """Inertia tensor about the CoM, kg*m^2. What URDF/MJCF wants."""
         return [row[:] for row in self._moi_com]
 
     def get_origin_moi(self):
-        """Inertia tensor about the body's local origin, kg·m²."""
+        """Inertia tensor about the body's local origin, kg*m^2."""
         return [row[:] for row in self._moi_origin]
 
     def get_mass_source(self):
@@ -322,11 +421,13 @@ class BodyInertial:
     def summary(self):
         """Print a human-readable summary of all properties."""
         print(f"=== BodyInertial: {self._label} ===")
-        print(f"  volume     = {self._volume*1e9:.2f} mm³  "
-              f"({self._volume:.9f} m³)")
+        if self._rpy_degrees is not None:
+            print(f"  output frame: rotated by RPY (deg) = {self._rpy_degrees}")
+        print(f"  volume     = {self._volume*1e9:.2f} mm^3  "
+              f"({self._volume:.9f} m^3)")
 
         if self._density is not None:
-            print(f"  density    = {self._density:.1f} kg/m³  "
+            print(f"  density    = {self._density:.1f} kg/m^3  "
                   f"[{self._density_source}]")
 
         print(f"  mass       = {self._mass:.6f} kg "
@@ -342,20 +443,31 @@ class BodyInertial:
                 geom_mass = self._volume * d_kgm3
                 ratio = self._mass / geom_mass if geom_mass > 0 else 0
                 print(f"               ({d_src} would give "
-                      f"{geom_mass*1000:.2f} g at {d_kgm3:.0f} kg/m³; "
+                      f"{geom_mass*1000:.2f} g at {d_kgm3:.0f} kg/m^3; "
                       f"ratio measured/material = {ratio:.3f})")
+
+        # Determine frame labels for clarity
+        if self._rpy_degrees is not None:
+            output_frame  = "rotated frame"
+            freecad_frame = "FreeCAD frame"
+        else:
+            output_frame = freecad_frame = "FreeCAD frame"
 
         lcx, lcy, lcz = self._local_com
         print(f"  local CoM  = ({lcx:.6f}, {lcy:.6f}, {lcz:.6f}) m  "
-              f"[{self._com_source}]")
+            f"[{self._com_source}, in {output_frame}]")
         if self._com_source == 'measured':
             gx, gy, gz = self._geometric_com
-            delta = [self._local_com[i] - self._geometric_com[i]
-                     for i in range(3)]
+            # Note: the parallel-axis distance is computed in FreeCAD frame because
+            # _geometric_com is in FreeCAD frame. For Z-axis rotations this gives
+            # the same magnitude as in the rotated frame; for general rotations
+            # the magnitude is preserved (rotations don't change distances).
+            delta = [self._measured_com[i] - self._geometric_com[i]
+                    for i in range(3)]
             dist_mm = math.sqrt(sum(d*d for d in delta)) * 1000
             print(f"               (geometric would be "
-                  f"({gx:.6f}, {gy:.6f}, {gz:.6f}) m; "
-                  f"measured is {dist_mm:.2f}mm away)")
+                f"({gx:.6f}, {gy:.6f}, {gz:.6f}) m, in {freecad_frame}; "
+                f"measured is {dist_mm:.2f}mm away)")
 
         gcx, gcy, gcz = self.get_global_com()
         print(f"  global CoM = ({gcx:.6f}, {gcy:.6f}, {gcz:.6f}) m  "
@@ -363,9 +475,9 @@ class BodyInertial:
 
         px, py, pz = self._placement
         print(f"  placement  = ({px:.6f}, {py:.6f}, {pz:.6f}) m  "
-              f"(body origin in parent frame)")
+            f"(body origin in parent frame, in {output_frame})")
 
-        print(f"  MoI about CoM (kg·m²):")
+        print(f"  MoI about CoM (kg*m^2, in {output_frame}):")
         self._print_matrix(self._moi_com, indent="    ")
 
         kx, ky, kz = self.get_radii_of_gyration()
