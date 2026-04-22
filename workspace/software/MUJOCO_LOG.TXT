@@ -1,0 +1,12 @@
+Wed Apr 22 20:45:21 2026
+ERROR: mjv_cameraFrustum: fixed camera id is outside valid range
+
+Wed Apr 22 20:45:29 2026
+ERROR: mjv_cameraFrustum: fixed camera id is outside valid range
+
+Wed Apr 22 20:45:55 2026
+ERROR: mjv_cameraFrustum: fixed camera id is outside valid range
+
+Wed Apr 22 20:51:14 2026
+ERROR: mjv_cameraFrustum: fixed camera id is outside valid range
+

@@ -95,16 +95,12 @@
            dir="0 0 -1" 
            diffuse="0.8 0.8 0.8"/>
 
-    <!-- Camera (third-person view) -->
-    <camera name="trackcam" 
-            pos="0.3 -0.3 0.15"
-            xyaxes="1 1 0 -0.3 0.3 1"
-            mode="trackcom"/>
-
-    <!-- Ground plane at z=0, grid texture -->
+    <!-- Ground plane at z=0, grid texture. If size x or y is set to 0, the 
+         plane is infinitely wide/long with 0 size. We'll make it large but
+         finite. -->
     <geom name="ground"
           type="plane"
-          size="0 0 0.1"
+          size="5 5 0.1"
           material="grid"/>
 
     <!-- Define the robot as a nested tree of bodies and joints. The origin of
@@ -121,7 +117,7 @@
       <geom name="chassis_geom"
             type="mesh"
             mesh="chassis_mesh"
-            rgba="0.87 0.23 0.16 0.7"/>
+            rgba="0.87 0.23 0.16 1.0"/>
 
       <!-- Chassis inertial properties (copied from FreeCAD script output) -->
       <inertial pos="0.000000 0.000000 0.017000" 
@@ -134,6 +130,14 @@
             pos="0 0 0.038" 
             size="0.005"
             rgba="0 0 1.0 1.0"/>
+
+      <!-- Optional visual box to show the "front" of the robot -->
+      <geom type="box" 
+            size="0.001 0.01 0.005" 
+            pos="0.027 0 0.02"
+            rgba="0 1.0 0 1.0" 
+            contype="0" 
+            conaffinity="0"/>
 
       <!-- Left wheel -->
       <body name="wheel_left" pos="0 0.04 0">

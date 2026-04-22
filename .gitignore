@@ -1,1 +1,3 @@
 *.FCBak
+.Trash-*/
+.ipynb_checkpoints/
