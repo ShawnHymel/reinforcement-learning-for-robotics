@@ -1,29 +1,31 @@
 <?xml version="1.0"?>
-<robot name="bala2">
 
-  <!-- ============================================================== -->
-  <!-- Bala2 Fire balance bot                                          -->
-  <!--                                                                  -->
-  <!-- Coordinate convention: ROS (X=forward, Y=left, Z=up)             -->
-  <!-- Mesh files in mm, scaled to m via the mesh scale attribute.      -->
-  <!--                                                                  -->
-  <!-- Mass:  ~159g total (chassis 125g measured + 2 wheels @ 17g)      -->
-  <!-- CoM:   chassis CoM at z=18mm above the wheel-axle plane          -->
-  <!-- ============================================================== -->
+<!-- URDF -->
+<!-- Specifies physical components of the robot and how they fit together
+     Note: ROS standard assumes X-axis is forward/backward for the robot -->
 
-  <!-- ===== CHASSIS ===== -->
+<robot name="bala2-fire-simplified">
+
+  <!-- ===================================================================== -->
+  <!-- Links (rigid body components) -->
+
+  <!-- Chassis -->
   <link name="chassis">
 
+    <!-- Specifies how to render the component -->
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
+        <!-- Load STL file, specify unit conversion to meters -->
         <mesh filename="meshes/chassis.stl" scale="0.001 0.001 0.001"/>
       </geometry>
-      <material name="chassis_grey">
-        <color rgba="0.3 0.3 0.4 1.0"/>
+      <!-- Red color, opaque -->
+      <material name="chassis_red">
+        <color rgba="0.87 0.23 0.16 1.0"/>
       </material>
     </visual>
 
+    <!-- Provides collision body (can be different than <visual>)-->
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
@@ -31,16 +33,20 @@
       </geometry>
     </collision>
 
+    <!-- Defines the mass properties of the body -->
     <inertial>
-      <origin xyz="0 0 0.018" rpy="0 0 0"/>
-      <mass value="0.125000"/>
-      <inertia ixx="0.000059379" iyy="0.000056717" izz="0.000057370"
-               ixy="0" ixz="0" iyz="0"/>
+      <origin xyz="0.000000 0.000000 0.017000" rpy="0 0 0"/>
+      <mass value="0.127000"/>
+      <inertia ixx="0.000056790"
+               iyy="0.000054532"
+               izz="0.000058722"
+               ixy="0.000000000"
+               ixz="0.000000000"
+               iyz="0.000000000"/>
     </inertial>
-
   </link>
 
-  <!-- ===== LEFT WHEEL ===== -->
+  <!-- Left wheel -->
   <link name="wheel_left">
 
     <visual>
@@ -61,15 +67,18 @@
     </collision>
 
     <inertial>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0 0 0"/>
       <mass value="0.017000"/>
-      <inertia ixx="0.000001620" iyy="0.000002603" izz="0.000001620"
-               ixy="0" ixz="0" iyz="0"/>
+      <inertia ixx="0.000002611"
+               iyy="0.000004303"
+               izz="0.000002611"
+               ixy="0.000000000"
+               ixz="0.000000000"
+               iyz="0.000000000"/>
     </inertial>
-
   </link>
 
-  <!-- ===== RIGHT WHEEL ===== -->
+  <!-- Right wheel -->
   <link name="wheel_right">
 
     <visual>
@@ -77,9 +86,7 @@
       <geometry>
         <mesh filename="meshes/wheel_right.stl" scale="0.001 0.001 0.001"/>
       </geometry>
-      <material name="wheel_black">
-        <color rgba="0.1 0.1 0.1 1.0"/>
-      </material>
+      <material name="wheel_black"/>
     </visual>
 
     <collision>
@@ -90,32 +97,49 @@
     </collision>
 
     <inertial>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <origin xyz="0.000000 0.000000 0.000000" rpy="0 0 0"/>
       <mass value="0.017000"/>
-      <inertia ixx="0.000001620" iyy="0.000002603" izz="0.000001620"
-               ixy="0" ixz="0" iyz="0"/>
+      <inertia ixx="0.000002611"
+               iyy="0.000004303"
+               izz="0.000002611"
+               ixy="0.000000000"
+               ixz="0.000000000"
+               iyz="0.000000000"/>
     </inertial>
-
   </link>
 
-  <!-- ============================================================== -->
-  <!-- JOINTS                                                           -->
-  <!-- Continuous joint = revolute with no angle limits (wheels spin    -->
-  <!-- freely). Tiny damping/friction for numerical stability.          -->
-  <!-- ============================================================== -->
+  <!-- ===================================================================== -->
+  <!-- Joints (how the links are connected) -->
 
+  <!-- Left wheel joint -->
+  <!-- Type options:
+       fixed: rigid attachment (no motion)
+       revolute: rotational with angle limits
+       continuous: rotational without limits
+       prismatic: linear translation with limits
+       planar: 2D motion in a plane
+       floating: full 6-DoF motion -->
   <joint name="left_wheel_joint" type="continuous">
+    <!-- Parent stays still (in joints frame of reference), child moves -->
     <parent link="chassis"/>
     <child  link="wheel_left"/>
-    <origin xyz="0 0.0355 0" rpy="0 0 0"/>
+
+    <!-- Joint's origin is (x, y, z) meters from the parent's frame origin -->
+    <!-- and rotated (r, p, y) radians -->
+    <origin xyz="0 0.040 0" rpy="0 0 0"/>
+
+    <!-- Child can freely rotate around the Y-axis in the joint's frame -->
     <axis xyz="0 1 0"/>
+
+    <!-- Passive forces acting on the joint -->
     <dynamics damping="0.001" friction="0.001"/>
   </joint>
 
+  <!-- Right wheel joint -->
   <joint name="right_wheel_joint" type="continuous">
     <parent link="chassis"/>
     <child  link="wheel_right"/>
-    <origin xyz="0 -0.0355 0" rpy="0 0 0"/>
+    <origin xyz="0 -0.040 0" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
     <dynamics damping="0.001" friction="0.001"/>
   </joint>
