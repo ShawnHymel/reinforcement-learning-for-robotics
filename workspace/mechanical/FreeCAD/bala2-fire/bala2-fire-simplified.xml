@@ -77,11 +77,13 @@
              mark="cross"
              markrgb="0.8 0.8 0.8"/>
 
-    <!-- Create a grid material from the grid texture -->
+    <!-- Create a grid material from the grid texture  -->
     <material name="grid"
               texture="grid"
               texrepeat="5 5"
-              reflectance="0.2"/>
+              reflectance="0"
+              specular="0"
+              shininess="0"/>
   </asset>
 
   <!-- ===================================================================== -->
@@ -226,14 +228,14 @@
     <!-- IMU sensors at imu_site. While our MPU6886 only provides gyro and
          acceleration data, we can get ground-truth orientation here to help
          us with training (even if we don't have it on the real robot). -->
-    <gyro name="imu_gyro" site="imu_site"/>
     <accelerometer name="imu_accel" site="imu_site"/>
+    <gyro name="imu_gyro" site="imu_site"/>
     <framequat name="imu_orientation" objtype="site" objname="imu_site"/>
 
     <!-- Wheel encoders (joint position and velocity) -->
-    <jointpos name="left_wheel_pos"  joint="left_wheel_joint"/>
+    <jointpos name="left_wheel_pos" joint="left_wheel_joint"/>
     <jointpos name="right_wheel_pos" joint="right_wheel_joint"/>
-    <jointvel name="left_wheel_vel"  joint="left_wheel_joint"/>
+    <jointvel name="left_wheel_vel" joint="left_wheel_joint"/>
     <jointvel name="right_wheel_vel" joint="right_wheel_joint"/>
   </sensor>
 
