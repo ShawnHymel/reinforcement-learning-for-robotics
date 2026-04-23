@@ -1,3 +1,4 @@
 *.FCBak
 .Trash-*/
 .ipynb_checkpoints/
+**/MUJOCO_LOG.TXT

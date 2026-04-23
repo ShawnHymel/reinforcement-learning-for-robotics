@@ -1,0 +1,7 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=JupyterLab
+Exec=xfce4-terminal --hold -e "bash -c 'cd /workspace && jupyter lab'"
+Icon=/usr/share/pixmaps/jupyter-logo.svg
+Terminal=false

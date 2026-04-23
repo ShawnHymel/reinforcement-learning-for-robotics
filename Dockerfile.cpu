@@ -221,15 +221,26 @@ RUN chmod -R 0777 /config/.vscode && \
 #-------------------------------------------------------------------------------
 # Desktop customization
 
+# Copy custom icons
+COPY scripts/jupyter-logo.svg /usr/share/pixmaps/jupyter-logo.svg
+
 # Copy the config script
-RUN mkdir -p /config/.config/autostart
 COPY scripts/xfce-config.sh /usr/local/bin/xfce-config.sh
 RUN chmod +x /usr/local/bin/xfce-config.sh
 
-# Copy launcher
-COPY scripts/xfce-config.desktop /config/.config/autostart/xfce-config.desktop
-RUN chmod 644 /config/.config/autostart/xfce-config.desktop && \
-    chown -R ${DEFAULT_USERNAME}:${DEFAULT_USERNAME} /config/.config /usr/local/bin/xfce-config.sh
+# Copy all desktop files to a staging directory for xfce-config.sh to use
+COPY scripts/desktop/ /tmp/desktop-defaults/
+RUN chmod -R 644 /tmp/desktop-defaults/*.desktop
+
+# Copy in the autostart entry
+RUN mkdir -p /config/.config/autostart && \
+    cp /tmp/desktop-defaults/xfce-config.desktop \
+       /config/.config/autostart/xfce-config.desktop && \
+    chmod 644 /config/.config/autostart/xfce-config.desktop && \
+    chown -R ${DEFAULT_USERNAME}:${DEFAULT_USERNAME} \
+        /config/.config \
+        /tmp/desktop-defaults \
+        /usr/local/bin/xfce-config.sh
 
 #-------------------------------------------------------------------------------
 # Entrypoint

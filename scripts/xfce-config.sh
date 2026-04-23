@@ -34,20 +34,13 @@ BASE="/backdrop/screen0/monitorselkies-primary/workspace0"
 } >> "$LOG" 2>&1
 
 #-------------------------------------------------------------------------------
-# Add terminal shortcut to desktop
+# Desktop customization
 
+# Copy in desktop icons
 mkdir -p /config/Desktop
+cp /tmp/desktop-defaults/terminal.desktop   /config/Desktop/terminal.desktop
+cp /tmp/desktop-defaults/jupyterlab.desktop /config/Desktop/jupyterlab.desktop
+chmod +x /config/Desktop/*.desktop
 
-cat <<EOF > /config/Desktop/terminal.desktop
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Terminal
-Exec=xfce4-terminal
-Icon=utilities-terminal
-Terminal=false
-EOF
-
-chmod +x /config/Desktop/terminal.desktop
-
-xfconf-query -c xfce4-desktop -p /desktop-icons/style -n -t int -s 2 || true
+# Show icons from ~/Desktop only
+xfconf-query -c xfce4-desktop -p /desktop-icons/style -s 2 || true
