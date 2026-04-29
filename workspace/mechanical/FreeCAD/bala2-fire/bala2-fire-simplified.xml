@@ -128,13 +128,14 @@
 
       <!-- Site for IMU sensor: measured from the chassis's origin, displayed
            as a blue ball (will be inside chassis) -->
-      <site name="imu_site" 
-            pos="0 0 0.038" 
-            size="0.005"
+      <site name="imu_site"
+            type="box"
+            pos="-0.008 0.0225 0.040" 
+            size="0.003 0.003 0.00035"
             rgba="0 0 1.0 1.0"/>
 
       <!-- Optional visual box to show the "front" of the robot -->
-      <geom type="box" 
+      <geom type="box"
             size="0.001 0.01 0.005" 
             pos="0.027 0 0.02"
             rgba="0 1.0 0 1.0" 

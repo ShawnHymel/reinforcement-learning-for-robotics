@@ -1,0 +1,7 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=VS Code
+Exec=code /config/rl-robotics.code-workspace --no-sandbox
+Icon=vscode
+Terminal=false

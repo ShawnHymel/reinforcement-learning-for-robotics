@@ -210,8 +210,7 @@ RUN cd /tmp/vscode-extensions && \
 
 RUN rm -rf /tmp/vscode-extensions
 
-RUN mkdir -p /config/.vscode
-COPY scripts/vscode-settings.json /config/.vscode/settings.json
+COPY scripts/rl-robotics.code-workspace /config/rl-robotics.code-workspace
 
 RUN chmod -R 0777 /config/.vscode && \
     mkdir -p /config/.cache && \

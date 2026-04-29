@@ -40,6 +40,7 @@ BASE="/backdrop/screen0/monitorselkies-primary/workspace0"
 mkdir -p /config/Desktop
 cp /tmp/desktop-defaults/terminal.desktop   /config/Desktop/terminal.desktop
 cp /tmp/desktop-defaults/jupyterlab.desktop /config/Desktop/jupyterlab.desktop
+cp /tmp/desktop-defaults/vscode.desktop     /config/Desktop/vscode.desktop
 chmod +x /config/Desktop/*.desktop
 
 # Show icons from ~/Desktop only

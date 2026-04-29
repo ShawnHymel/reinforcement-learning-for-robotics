@@ -1,0 +1,15 @@
+{
+    "folders": [
+        {
+            "path": "/workspace"
+        }
+    ],
+    "settings": {
+        "python.defaultInterpreterPath": "/opt/rl-env/bin/python",
+        "jupyter.notebookFileRoot": "/config/workspaces",
+        "github.gitAuthentication": false,
+        "git.terminalAuthentication": false,
+        "chat.disableAIFeatures": true,
+        "extensions.disabled": ["github.authentication"]
+    }
+}
