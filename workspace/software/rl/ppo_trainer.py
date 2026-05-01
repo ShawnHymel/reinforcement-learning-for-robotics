@@ -330,6 +330,7 @@ def evaluate(
     env_id=None,
     run_name=None,
     gamma=None,
+    max_steps=None,
 ):
     """
     Evaluate a saved policy by running it in the environment for a fixed number of episodes
@@ -339,17 +340,18 @@ def evaluate(
     gamma to have this function construct one automatically.
 
     Args:
-        model_path (Path):          path to the saved model file (.cleanrl_model)
-        eval_episodes (int):        number of complete episodes to run
-        Model (nn.Module):          agent class to instantiate (e.g. Agent)
-        device (torch.device):      device to run inference on (CPU or GPU)
-        config (PPOConfig):         configuration used to build the agent network architecture
-        envs (SyncVectorEnv):       optional pre-built vectorized env. If provided, make_env,
-                                    env_id, run_name, and gamma are ignored.
-        make_env (callable):        environment factory function (see make_env() above)
-        env_id (str):               registered gymnasium environment ID (e.g. "BalanceBot-v0")
-        run_name (str):             name of the current run, used for environment setup
-        gamma (float):              discount factor, passed to make_env for reward normalization
+        model_path (Path): path to the saved model file (.cleanrl_model)
+        eval_episodes (int): number of complete episodes to run
+        Model (nn.Module): agent class to instantiate (e.g. Agent)
+        device (torch.device): device to run inference on (CPU or GPU)
+        config (PPOConfig): configuration used to build the agent network architecture
+        envs (SyncVectorEnv): optional pre-built vectorized env. If provided, make_env,
+                              env_id, run_name, and gamma are ignored.
+        make_env (callable): environment factory function (see make_env() above)
+        env_id (str): registered gymnasium environment ID (e.g. "BalanceBot-v0")
+        run_name (str): name of the current run, used for environment setup
+        gamma (float): discount factor, passed to make_env for reward normalization
+        max_steps (int): max number of steps per episode (if None, use config.num_steps)
 
     Returns:
         list[float]: episodic returns for each completed evaluation episode
@@ -366,6 +368,9 @@ def evaluate(
     else:
         raise ValueError("Either envs or make_env must be provided")
 
+    # Define the max number of steps per episode
+    max_steps = max_steps if max_steps is not None else config.num_steps
+
     # Load the saved weights into a fresh agent instance
     agent = Model(eval_envs, config).to(device)
     agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
@@ -376,20 +381,30 @@ def evaluate(
     # Run until we have collected enough complete episodes
     episodic_returns = []
     obs, _ = eval_envs.reset()
+    step = 0
     while len(episodic_returns) < eval_episodes:
-
         # Select actions without gradient tracking since we're not training
         with torch.no_grad():
             action, _, _, _ = agent.get_action_and_value(torch.Tensor(obs).to(device))
 
         # Step the environment
         obs, _, _, _, infos = eval_envs.step(action.cpu().numpy())
+        step += 1
 
         # Record the return when an episode finishes
         if "final_info" in infos:
             for info in infos["final_info"]:
                 if info and "episode" in info:
                     episodic_returns.append(info["episode"]["r"])
+
+        # Force episode end if we've hit the step limit
+        if step >= max_steps:
+            # Mark episode as incomplete
+            episodic_returns.append(float("nan"))
+
+            # Reset environment
+            obs, _ = eval_envs.reset()
+            step = 0
 
     # Only close the env if we created it (don't close one the caller owns)
     if owns_envs:
@@ -410,6 +425,9 @@ def train(config: PPOConfig, envs=None):
     config.batch_size = int(config.num_envs * config.num_steps)
     config.minibatch_size = int(config.batch_size // config.num_minibatches)
     config.num_iterations = config.total_timesteps // config.batch_size
+
+    # TEST
+    print("START: train()")
 
     # Ensure that if a vector of custom environments is passed in, the num_envs parameter reflects
     # that number
@@ -436,6 +454,9 @@ def train(config: PPOConfig, envs=None):
             save_code=True,
         )
 
+    # TEST
+    print("CHECKPOINT: config computed")
+
     # Initialize a log for TensorBoard
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
@@ -443,6 +464,9 @@ def train(config: PPOConfig, envs=None):
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in \
                                                  vars(config).items()])),
     )
+
+    # TEST
+    print("CHECKPOINT: writer initialized")
 
     # Initialize checkpoints
     checkpoint_dir = Path(f"runs/{run_name}")
@@ -476,9 +500,15 @@ def train(config: PPOConfig, envs=None):
     assert isinstance(envs.single_action_space, gym.spaces.Box), \
         "only continuous action space is supported"
 
+    # TEST
+    print("CHECKPOINT: envs ready")
+
     # Create an agent (initialize actor/critic networks) and set optimizer function
     agent = Agent(envs, config).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=config.learning_rate, eps=1e-5)
+
+    # TEST
+    print("CHECKPOINT: agent created")
 
     # Pre-allocate storage tensors for one full rollout of experience
     obs = torch.zeros((config.num_steps, config.num_envs) + envs.single_observation_space.shape).to(device)
@@ -488,12 +518,28 @@ def train(config: PPOConfig, envs=None):
     dones = torch.zeros((config.num_steps, config.num_envs)).to(device)
     values = torch.zeros((config.num_steps, config.num_envs)).to(device)
 
+    # TEST
+    print("CHECKPOINT: storage allocated")
+
     # Initialize training state: step counter, timer, and first observation
     global_step = 0
     start_time = time.time()
     next_obs, _ = envs.reset(seed=config.seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(config.num_envs).to(device)
+
+    # TEST
+    print("CHECKPOINT: initial reset done")
+
+    # %%%Test render directly before training loop
+    if render:
+        print("CHECKPOINT: attempting test render")
+        print(f"  envs.envs[0] type: {type(envs.envs[0])}")
+        print(f"  render_mode: {envs.envs[0].render_mode}")
+        envs.envs[0].render()
+        print("CHECKPOINT: test render complete")
+        time.sleep(2)  # pause so we can see if the window appears
+        print("CHECKPOINT: entering iteration loop")
 
     # Each iteration: run all environments for num_steps (restarting terminated or truncated
     # episodes as needed), collect data from observations (by having the agent execute actions
@@ -507,6 +553,9 @@ def train(config: PPOConfig, envs=None):
             lrnow = frac * config.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
+        # TEST
+        print(f"CHECKPOINT: iteration {iteration} start")
+
         # Perform a rollout: collect experience by executing actions given by the actor network
         # in all of the simulated environments
         for step in range(0, config.num_steps):
@@ -514,6 +563,9 @@ def train(config: PPOConfig, envs=None):
             global_step += config.num_envs
             obs[step] = next_obs
             dones[step] = next_done
+
+            # TEST
+            print(f"CHECKPOINT: step {step}")
 
             # Get actions (for each env) from the actor network
             with torch.no_grad():
@@ -812,7 +864,7 @@ def train(config: PPOConfig, envs=None):
         for idx, episodic_return in enumerate(episodic_returns):
             writer.add_scalar("eval/episodic_return", episodic_return, idx)
 
-        print(f"evaluation complete: mean return = {np.mean(episodic_returns):.2f} "
+        print(f"Evaluation complete: mean return = {np.mean(episodic_returns):.2f} "
             f"over {len(episodic_returns)} episodes")
 
         # Optionally upload the model to Hugging Face Hub (removed)
