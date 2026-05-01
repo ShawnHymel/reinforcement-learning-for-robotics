@@ -15,7 +15,7 @@ source /opt/rl-env/bin/activate
 # Access at http://localhost:6006 in a browser.
 mkdir -p /workspace/software/runs
 nohup /opt/rl-env/bin/tensorboard \
-    --logdir /workspace/software/runs \
+    --logdir /workspace/software \
     --host 0.0.0.0 \
     --port 6006 \
     --reload_interval 5 \
