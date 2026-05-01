@@ -1,4 +1,26 @@
-*.FCBak
-.Trash-*/
-.ipynb_checkpoints/
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# TensorBoard logs and model checkpoints
+runs/
+
+# MuJoCo
+videos/
 **/MUJOCO_LOG.TXT
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Environment files
+.env
+
+# VS Code
+.vscode/
+
+# FreeCAD
+*.FCBak
+
+# Others
+.Trash-*/
