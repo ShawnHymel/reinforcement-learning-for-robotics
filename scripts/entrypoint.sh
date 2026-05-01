@@ -10,4 +10,17 @@ rm -f /config/.config/xfce4/desktop/icons.screen0.yaml
 # starts the XFCE desktop, noVNC, and all other Webtop services.
 source /opt/rl-env/bin/activate
 
+# Start TensorBoard in the background so it's available as soon as the
+# container starts. Logs are written to /tmp/tensorboard.log.
+# Access at http://localhost:6006 in a browser.
+mkdir -p /workspace/software/runs
+nohup /opt/rl-env/bin/tensorboard \
+    --logdir /workspace/software/runs \
+    --host 0.0.0.0 \
+    --port 6006 \
+    --reload_interval 5 \
+    &> /tmp/tensorboard.log &
+
+echo "TensorBoard started on port 6006 (logs: /tmp/tensorboard.log)"
+
 exec /init

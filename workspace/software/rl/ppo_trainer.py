@@ -7,6 +7,8 @@ Changes by: Shawn Hymel
 Date: April 30, 2026
 
 Changes:
+ * Switched from torch.utils.tensorboard to tensorboardX to avoid LLVM conflict between TensorFlow
+   and MuJoCo's shader compiler (causes segfault in same process)
  * Replaced "__main__" into a train() function so this file can be imported into
    e.g. a Jupyter Notebook.
  * Added ability to import a custom environment (rather than having to register one in gymnasium).
@@ -34,11 +36,11 @@ from pathlib import Path
 # Import third-party libraries
 import gymnasium as gym
 import numpy as np
+from tensorboardX import SummaryWriter
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.normal import Normal
-from torch.utils.tensorboard import SummaryWriter
 
 #-------------------------------------------------------------------------------
 # Configuration (hyperparameters)
@@ -426,8 +428,8 @@ def train(config: PPOConfig, envs=None):
     config.minibatch_size = int(config.batch_size // config.num_minibatches)
     config.num_iterations = config.total_timesteps // config.batch_size
 
-    # TEST
-    print("START: train()")
+    # Assign a name for the run
+    run_name = f"{config.env_id}__{config.exp_name}__{config.seed}__{int(time.time())}"
 
     # Ensure that if a vector of custom environments is passed in, the num_envs parameter reflects
     # that number
@@ -437,8 +439,18 @@ def train(config: PPOConfig, envs=None):
             f"Either update config.num_envs or reconstruct the vectorized env."
         )
 
-    # Assign a name for the run
-    run_name = f"{config.env_id}__{config.exp_name}__{config.seed}__{int(time.time())}"
+    # If a pre-built vectorized env is provided, use it directly. Otherwise, construct parallel envs
+    # using make_env() and the env_id in config.
+    if envs is not None:
+        render = True
+        owns_envs = False
+    else:
+        envs = gym.vector.SyncVectorEnv(
+            [make_env(config.env_id, i, config.capture_video, run_name, config.gamma)
+             for i in range(config.num_envs)]
+        )
+        render = False
+        owns_envs = True
 
     # If track is set, use Weights & Biases to log experiments
     if config.track:
@@ -454,9 +466,6 @@ def train(config: PPOConfig, envs=None):
             save_code=True,
         )
 
-    # TEST
-    print("CHECKPOINT: config computed")
-
     # Initialize a log for TensorBoard
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
@@ -464,9 +473,6 @@ def train(config: PPOConfig, envs=None):
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in \
                                                  vars(config).items()])),
     )
-
-    # TEST
-    print("CHECKPOINT: writer initialized")
 
     # Initialize checkpoints
     checkpoint_dir = Path(f"runs/{run_name}")
@@ -483,32 +489,13 @@ def train(config: PPOConfig, envs=None):
     # Assign a device for computation (CPU or GPU)
     device = torch.device("cuda" if torch.cuda.is_available() and config.cuda else "cpu")
 
-    # If a pre-built vectorized env is provided, use it directly. Otherwise, construct parallel envs
-    # using make_env() and the env_id in config.
-    if envs is not None:
-        render = True
-        owns_envs = False
-    else:
-        envs = gym.vector.SyncVectorEnv(
-            [make_env(config.env_id, i, config.capture_video, run_name, config.gamma)
-             for i in range(config.num_envs)]
-        )
-        render = False
-        owns_envs = True
-
     # Check that the environment supports a continuous action space
     assert isinstance(envs.single_action_space, gym.spaces.Box), \
         "only continuous action space is supported"
 
-    # TEST
-    print("CHECKPOINT: envs ready")
-
     # Create an agent (initialize actor/critic networks) and set optimizer function
     agent = Agent(envs, config).to(device)
     optimizer = optim.Adam(agent.parameters(), lr=config.learning_rate, eps=1e-5)
-
-    # TEST
-    print("CHECKPOINT: agent created")
 
     # Pre-allocate storage tensors for one full rollout of experience
     obs = torch.zeros((config.num_steps, config.num_envs) + envs.single_observation_space.shape).to(device)
@@ -518,28 +505,12 @@ def train(config: PPOConfig, envs=None):
     dones = torch.zeros((config.num_steps, config.num_envs)).to(device)
     values = torch.zeros((config.num_steps, config.num_envs)).to(device)
 
-    # TEST
-    print("CHECKPOINT: storage allocated")
-
     # Initialize training state: step counter, timer, and first observation
     global_step = 0
     start_time = time.time()
     next_obs, _ = envs.reset(seed=config.seed)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(config.num_envs).to(device)
-
-    # TEST
-    print("CHECKPOINT: initial reset done")
-
-    # %%%Test render directly before training loop
-    if render:
-        print("CHECKPOINT: attempting test render")
-        print(f"  envs.envs[0] type: {type(envs.envs[0])}")
-        print(f"  render_mode: {envs.envs[0].render_mode}")
-        envs.envs[0].render()
-        print("CHECKPOINT: test render complete")
-        time.sleep(2)  # pause so we can see if the window appears
-        print("CHECKPOINT: entering iteration loop")
 
     # Each iteration: run all environments for num_steps (restarting terminated or truncated
     # episodes as needed), collect data from observations (by having the agent execute actions
@@ -553,9 +524,6 @@ def train(config: PPOConfig, envs=None):
             lrnow = frac * config.learning_rate
             optimizer.param_groups[0]["lr"] = lrnow
 
-        # TEST
-        print(f"CHECKPOINT: iteration {iteration} start")
-
         # Perform a rollout: collect experience by executing actions given by the actor network
         # in all of the simulated environments
         for step in range(0, config.num_steps):
@@ -563,9 +531,6 @@ def train(config: PPOConfig, envs=None):
             global_step += config.num_envs
             obs[step] = next_obs
             dones[step] = next_done
-
-            # TEST
-            print(f"CHECKPOINT: step {step}")
 
             # Get actions (for each env) from the actor network
             with torch.no_grad():
@@ -870,7 +835,7 @@ def train(config: PPOConfig, envs=None):
         # Optionally upload the model to Hugging Face Hub (removed)
         if config.upload_model:
             print("WARNING: Hugging Face Hub upload is not supported in this implementation")
-   
+
     # Clean up
     if owns_envs:
         envs.close()
@@ -880,7 +845,7 @@ def train(config: PPOConfig, envs=None):
     if config.checkpoint_interval is not None and len(recent_returns) > 0:
         best_model_path = checkpoint_dir / "best_model.cleanrl_model"
         agent.load_state_dict(torch.load(best_model_path, map_location=device, weights_only=True))
-        print(f"returning best model (mean_return={best_mean_return:.2f})")
+        print(f"Returning best model (mean_return={best_mean_return:.2f})")
 
     return agent
 
