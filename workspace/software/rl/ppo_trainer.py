@@ -382,6 +382,7 @@ def evaluate(
 
     # Run until we have collected enough complete episodes
     episodic_returns = []
+    episode_reward = 0.0
     obs, _ = eval_envs.reset()
     episode_steps = 0
     while len(episodic_returns) < eval_episodes:
@@ -394,7 +395,8 @@ def evaluate(
             )
 
         # Step the environment
-        obs, _, _, _, infos = eval_envs.step(action.cpu().numpy())
+        obs, reward, _, _, infos = eval_envs.step(action.cpu().numpy())
+        episode_reward += float(reward[0])
         episode_steps += 1
 
         # Render the current state if using a custom env with render_mode="human"
@@ -410,12 +412,14 @@ def evaluate(
             for i, finished in enumerate(infos.get("_episode", [])):
                 if finished:
                     episodic_returns.append(float(infos["episode"]["r"][i]))
+                    episode_reward = 0.0
                     episode_steps = 0
 
-        # Force episode end if we've hit the step limit
-        if episode_steps >= max_steps:
-            episodic_returns.append(float("nan"))
+        # Episode hit step limit: record accumulated reward and reset
+        elif episode_steps >= max_steps:
+            episodic_returns.append(episode_reward)
             obs, _ = eval_envs.reset()
+            episode_reward = 0.0
             episode_steps = 0
 
     # Only close the env if we created it
@@ -443,6 +447,8 @@ def train(config: PPOConfig, envs=None):
 
     # Assign a name for the run
     run_name = f"{config.env_id}__{config.exp_name}__{config.seed}__{int(time.time())}"
+    print(f"Run name: {run_name}")
+    print(f"TensorBoard: http://localhost:6006/#scalars&regexFilter={config.exp_name}")
 
     # Ensure that if a vector of custom environments is passed in, the num_envs parameter reflects
     # that number
@@ -575,7 +581,6 @@ def train(config: PPOConfig, envs=None):
                     if finished:
                         episodic_return = infos["episode"]["r"][i]
                         episodic_length = infos["episode"]["l"][i]
-                        print(f"global_step={global_step}, episodic_return={episodic_return:.2f}")
                         writer.add_scalar("charts/episodic_return", episodic_return, global_step)
                         writer.add_scalar("charts/episodic_length", episodic_length, global_step)
 
@@ -778,7 +783,7 @@ def train(config: PPOConfig, envs=None):
             # Save periodic checkpoint
             checkpoint_path = checkpoint_dir / f"checkpoint_iter{iteration:04d}.cleanrl_model"
             torch.save(agent.state_dict(), checkpoint_path)
-            print(f"checkpoint saved to {checkpoint_path}")
+            print(f"Checkpoint saved to {checkpoint_path}")
 
             # Save best model if mean return has improved
             if len(recent_returns) > 0:
@@ -787,7 +792,7 @@ def train(config: PPOConfig, envs=None):
                     best_mean_return = mean_return
                     best_model_path = checkpoint_dir / "best_model.cleanrl_model"
                     torch.save(agent.state_dict(), best_model_path)
-                    print(f"new best model saved (mean_return={mean_return:.2f}) to {best_model_path}")
+                    print(f"New best model saved (mean_return={mean_return:.2f}) to {best_model_path}")
 
             # Log mean return to TensorBoard
             if len(recent_returns) > 0:
@@ -797,18 +802,18 @@ def train(config: PPOConfig, envs=None):
     if config.save_model:
         final_model_path = checkpoint_dir / f"{config.exp_name}_final.cleanrl_model"
         torch.save(agent.state_dict(), final_model_path)
-        print(f"final model saved to {final_model_path}")
+        print(f"Final model saved to {final_model_path}")
 
     # Print best model summary if checkpointing was enabled and a best model was saved
     if config.checkpoint_interval is not None \
             and len(recent_returns) > 0 \
             and best_mean_return > -float("inf"):
-        print(f"best model achieved mean return of {best_mean_return:.2f}, "
+        print(f"Best model mean return: {best_mean_return:.2f}, "
               f"saved to {checkpoint_dir / 'best_model.cleanrl_model'}")
 
     # Removed upload for simplicity
     if config.upload_model:
-        print("WARNING: upload to Hugging Face Hub not supported")
+        print("WARNING: Upload to Hugging Face Hub not supported")
 
     # Clean up
     if owns_envs:
