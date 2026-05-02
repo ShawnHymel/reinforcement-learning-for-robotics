@@ -244,6 +244,18 @@ class Agent(nn.Module):
 
 
 #-------------------------------------------------------------------------------
+# Training results
+
+@dataclass
+class TrainResult:
+    agent: Agent                    # Final agent weights in memory
+    checkpoint_dir: Path            # Where all models were saved
+    best_model_path: Path | None    # Path to best checkpoint, None if not saved
+    final_model_path: Path | None   # Path to final model, None if not saved
+    best_mean_return: float         # Best mean return seen during training
+
+
+#-------------------------------------------------------------------------------
 # Module-level functions
 
 def make_env(env_id, idx, capture_video, run_name, gamma):
@@ -322,95 +334,96 @@ def build_mlp(input_size, output_size, num_hidden_layers, hidden_layer_size, out
     return nn.Sequential(*layers)
 
 def evaluate(
-    model_path,
+    agent,
     eval_episodes,
-    Model,
-    device,
     config,
     envs=None,
     make_env=None,
-    env_id=None,
-    run_name=None,
-    gamma=None,
-    max_steps=None,
 ):
     """
-    Evaluate a saved policy by running it in the environment for a fixed number of episodes
-    and returning the episodic returns. Used after training to measure final policy performance.
-
-    Either pass in a pre-built vectorized env (envs) or provide make_env + env_id + run_name +
-    gamma to have this function construct one automatically.
+    Evaluate a trained agent by running it in the environment for a fixed number of episodes and
+    returning the episodic returns. Either pass in a pre-built vectorized env (envs) or provide 
+    make_env in config to have this function construct one automatically.
 
     Args:
-        model_path (Path): path to the saved model file (.cleanrl_model)
+        agent (Agent): trained agent to evaluate
         eval_episodes (int): number of complete episodes to run
-        Model (nn.Module): agent class to instantiate (e.g. Agent)
-        device (torch.device): device to run inference on (CPU or GPU)
-        config (PPOConfig): configuration used to build the agent network architecture
-        envs (SyncVectorEnv): optional pre-built vectorized env. If provided, make_env,
-                              env_id, run_name, and gamma are ignored.
+        config (PPOConfig): training configuration
+        envs (SyncVectorEnv): optional pre-built vectorized env. If provided, make_env is ignored.
         make_env (callable): environment factory function (see make_env() above)
-        env_id (str): registered gymnasium environment ID (e.g. "BalanceBot-v0")
-        run_name (str): name of the current run, used for environment setup
-        gamma (float): discount factor, passed to make_env for reward normalization
-        max_steps (int): max number of steps per episode (if None, use config.num_steps)
 
     Returns:
-        list[float]: episodic returns for each completed evaluation episode
+        list[float]: episodic returns for each completed evaluation episode,
+                     nan for episodes that hit the step limit
     """
-    # Use provided vectorized env or construct a single eval env from make_env
-    owns_envs = False
+    import time
+
+    # If a pre-built vectorized env is provided, use it directly. Otherwise, construct a single eval
+    # env using make_env() and the env_id in config.
     if envs is not None:
         eval_envs = envs
+        render = True
+        owns_envs = False
     elif make_env is not None:
-        assert all(v is not None for v in [env_id, run_name, gamma]), \
-            "env_id, run_name, and gamma are required when make_env is provided"
-        eval_envs = gym.vector.SyncVectorEnv([make_env(env_id, 0, False, run_name, gamma)])
+        eval_envs = gym.vector.SyncVectorEnv(
+            [make_env(config.env_id, 0, False, "eval", config.gamma)]
+        )
+        render = False
         owns_envs = True
     else:
         raise ValueError("Either envs or make_env must be provided")
 
-    # Define the max number of steps per episode
-    max_steps = max_steps if max_steps is not None else config.num_steps
-
-    # Load the saved weights into a fresh agent instance
-    agent = Model(eval_envs, config).to(device)
-    agent.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-
     # Set agent to evaluation mode: disables dropout and batch normalization if present
     agent.eval()
+
+    # Determine max steps per episode — use env's own max_steps if available, otherwise fall back to
+    # config.num_steps
+    max_steps = getattr(eval_envs.envs[0], 'max_steps', config.num_steps)
 
     # Run until we have collected enough complete episodes
     episodic_returns = []
     obs, _ = eval_envs.reset()
-    step = 0
+    episode_steps = 0
     while len(episodic_returns) < eval_episodes:
+        step_start = time.time()
+
         # Select actions without gradient tracking since we're not training
         with torch.no_grad():
-            action, _, _, _ = agent.get_action_and_value(torch.Tensor(obs).to(device))
+            action, _, _, _ = agent.get_action_and_value(
+                torch.Tensor(obs).to(next(agent.parameters()).device)
+            )
 
         # Step the environment
         obs, _, _, _, infos = eval_envs.step(action.cpu().numpy())
-        step += 1
+        episode_steps += 1
 
-        # Record the return when an episode finishes
-        if "final_info" in infos:
-            for info in infos["final_info"]:
-                if info and "episode" in info:
-                    episodic_returns.append(info["episode"]["r"])
+        # Render the current state if using a custom env with render_mode="human"
+        if render:
+            envs.envs[0].render()
+            if config.timestep is not None:
+                slack = config.timestep - (time.time() - step_start)
+                if slack > 0:
+                    time.sleep(slack)
+
+        # Record the return when an episode finishes (Gymnasium 1.x structure)
+        if "episode" in infos:
+            for i, finished in enumerate(infos.get("_episode", [])):
+                if finished:
+                    episodic_returns.append(float(infos["episode"]["r"][i]))
+                    episode_steps = 0
 
         # Force episode end if we've hit the step limit
-        if step >= max_steps:
-            # Mark episode as incomplete
+        if episode_steps >= max_steps:
             episodic_returns.append(float("nan"))
-
-            # Reset environment
             obs, _ = eval_envs.reset()
-            step = 0
+            episode_steps = 0
 
-    # Only close the env if we created it (don't close one the caller owns)
+    # Only close the env if we created it
     if owns_envs:
         eval_envs.close()
+
+    # Restore agent to training mode
+    agent.train()
 
     return episodic_returns
 
@@ -554,18 +567,21 @@ def train(config: PPOConfig, envs=None):
                     if slack > 0:
                         time.sleep(slack)
 
-            # Log information from final step if the episode was terminated/truncated
-            if "final_info" in infos:
-                for info in infos["final_info"]:
-                    if info and "episode" in info:
-                        episodic_return = info["episode"]["r"]
-                        print(f"global_step={global_step}, episodic_return={episodic_return}")
+            # Log information when episode ends. 
+            # Note: episode data is directly in infos["episode"] in gymnasium 1.x: 
+            if "episode" in infos:
+                # Use the mask "_episode" to handle multiple envs
+                for i, finished in enumerate(infos.get("_episode", [])):
+                    if finished:
+                        episodic_return = infos["episode"]["r"][i]
+                        episodic_length = infos["episode"]["l"][i]
+                        print(f"global_step={global_step}, episodic_return={episodic_return:.2f}")
                         writer.add_scalar("charts/episodic_return", episodic_return, global_step)
-                        writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
+                        writer.add_scalar("charts/episodic_length", episodic_length, global_step)
 
-                        # Track recent returns for best model checkpointing
+                        # Add to returns
                         if config.checkpoint_interval is not None:
-                            recent_returns.append(episodic_return)
+                            recent_returns.append(float(episodic_return))
 
         # Compute returns for each timestep for each environment. Some terminology:
         #   value[t]: critic's predicted total, discounted rewards looking forward from step t
@@ -755,12 +771,10 @@ def train(config: PPOConfig, envs=None):
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
-        print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-        # Periodic checkpointing
+        # Periodicically save the model (checkpoint)
         if config.checkpoint_interval is not None and iteration % config.checkpoint_interval == 0:
-
             # Save periodic checkpoint
             checkpoint_path = checkpoint_dir / f"checkpoint_iter{iteration:04d}.cleanrl_model"
             torch.save(agent.state_dict(), checkpoint_path)
@@ -785,69 +799,33 @@ def train(config: PPOConfig, envs=None):
         torch.save(agent.state_dict(), final_model_path)
         print(f"final model saved to {final_model_path}")
 
-    # Print best model summary if checkpointing was enabled
-    if config.checkpoint_interval is not None and len(recent_returns) > 0:
+    # Print best model summary if checkpointing was enabled and a best model was saved
+    if config.checkpoint_interval is not None \
+            and len(recent_returns) > 0 \
+            and best_mean_return > -float("inf"):
         print(f"best model achieved mean return of {best_mean_return:.2f}, "
               f"saved to {checkpoint_dir / 'best_model.cleanrl_model'}")
 
-    # Prefer the best model (highest mean return during training) over the final model,
-    # as the policy can sometimes degrade near the end of training due to overshooting.
-    eval_model_path = None
-    if config.checkpoint_interval is not None and len(recent_returns) > 0:
-        eval_model_path = checkpoint_dir / "best_model.cleanrl_model"
-    elif config.save_model:
-        eval_model_path = checkpoint_dir / f"{config.exp_name}_final.cleanrl_model"
-
-    # Evaluate the model by running it in the environment for eval_episodes episodes
-    if eval_model_path is not None:
-        # Evaluate using the same env setup as training
-        if not owns_envs:
-            # Use custom vectorized envs passed in by caller
-            episodic_returns = evaluate(
-                model_path = eval_model_path,
-                eval_episodes = 10,
-                Model = Agent,
-                device = device,
-                config = config,
-                envs = envs,
-            )
-        else:
-            # No custom env: construct a new one for evaluation
-            episodic_returns = evaluate(
-                model_path = eval_model_path,
-                eval_episodes = 10,
-                Model = Agent,
-                device = device,
-                config = config,
-                make_env = make_env,
-                env_id = config.env_id,
-                run_name = f"{run_name}-eval",
-                gamma = config.gamma,
-            )
-
-        # Log evaluation episode returns to TensorBoard
-        for idx, episodic_return in enumerate(episodic_returns):
-            writer.add_scalar("eval/episodic_return", episodic_return, idx)
-
-        print(f"Evaluation complete: mean return = {np.mean(episodic_returns):.2f} "
-            f"over {len(episodic_returns)} episodes")
-
-        # Optionally upload the model to Hugging Face Hub (removed)
-        if config.upload_model:
-            print("WARNING: Hugging Face Hub upload is not supported in this implementation")
+    # Removed upload for simplicity
+    if config.upload_model:
+        print("WARNING: upload to Hugging Face Hub not supported")
 
     # Clean up
     if owns_envs:
         envs.close()
     writer.close()
 
-    # Return the best agent if checkpointing was enabled, otherwise return the final agent
-    if config.checkpoint_interval is not None and len(recent_returns) > 0:
-        best_model_path = checkpoint_dir / "best_model.cleanrl_model"
-        agent.load_state_dict(torch.load(best_model_path, map_location=device, weights_only=True))
-        print(f"Returning best model (mean_return={best_mean_return:.2f})")
+    # Return training results (caller decides which model to load and evaluate)
+    best_model_path = checkpoint_dir / "best_model.cleanrl_model"
+    final_model_path = checkpoint_dir / f"{config.exp_name}_final.cleanrl_model"
 
-    return agent
+    return TrainResult(
+        agent = agent,
+        checkpoint_dir = checkpoint_dir,
+        best_model_path = best_model_path if best_model_path.exists() else None,
+        final_model_path = final_model_path if final_model_path.exists() else None,
+        best_mean_return = best_mean_return,
+    )
 
 #-------------------------------------------------------------------------------
 # Main
