@@ -333,6 +333,52 @@ def build_mlp(input_size, output_size, num_hidden_layers, hidden_layer_size, out
 
     return nn.Sequential(*layers)
 
+def export_tb_plots_as_csv(run_path):
+    """
+    Export a TensorBoard plots to a single CSV file, which is saved in the run directory.
+
+    Args:
+        run_path (Path or str): path to the TensorBoard run directory
+    """
+    from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+    import csv
+    
+    # Get the tags from the TensorBoard run
+    run_path = Path(run_path)
+    ea = EventAccumulator(str(run_path))
+    ea.Reload()
+    tags = ea.Tags()['scalars']
+    if not tags:
+        print(f"No scalar tags found in {run_path}")
+        return
+
+    # Group tags by prefix (e.g. "charts", "losses", "eval")
+    groups = {}
+    for tag in tags:
+        prefix = tag.split('/')[0]
+        groups.setdefault(prefix, []).append(tag)
+
+    # Export one CSV per group
+    for group, group_tags in groups.items():
+        data = {}
+        all_steps = set()
+        for tag in group_tags:
+            events = ea.Scalars(tag)
+            data[tag] = {e.step: e.value for e in events}
+            all_steps.update(data[tag].keys())
+
+        output_path = run_path / f"{group}_metrics.csv"
+        with open(output_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            # Use short column names (strip the group prefix)
+            short_names = [t.split('/', 1)[1] for t in group_tags]
+            writer.writerow(['step'] + short_names)
+            for step in sorted(all_steps):
+                row = [step] + [data[tag].get(step, '') for tag in group_tags]
+                writer.writerow(row)
+
+        print(f"Exported {run_path}/{group}_metrics.csv ({len(group_tags)} metrics, {len(all_steps)} steps)")
+
 def evaluate(
     agent,
     eval_episodes,
@@ -444,6 +490,12 @@ def train(config: PPOConfig, envs=None):
     config.batch_size = int(config.num_envs * config.num_steps)
     config.minibatch_size = int(config.batch_size // config.num_minibatches)
     config.num_iterations = config.total_timesteps // config.batch_size
+
+     # Warn if checkpoint_interval exceeds total iterations (checkpoints will never fire)
+    if config.checkpoint_interval is not None and \
+            config.checkpoint_interval > config.num_iterations:
+        print(f"WARNING: checkpoint_interval ({config.checkpoint_interval}) exceeds "
+              f"total iterations ({config.num_iterations}). No checkpoints will be saved. ")
 
     # Assign a name for the run
     run_name = f"{config.env_id}__{config.exp_name}__{config.seed}__{int(time.time())}"
@@ -565,7 +617,7 @@ def train(config: PPOConfig, envs=None):
             next_obs = torch.Tensor(next_obs).to(device)
             next_done = torch.Tensor(next_done).to(device)
 
-            # Render the current state if using a custom env with render_mode="human"
+            # With custom envs, render the state of the first env if render_mode="human"
             if render:
                 envs.envs[0].render()
                 if config.timestep is not None:
