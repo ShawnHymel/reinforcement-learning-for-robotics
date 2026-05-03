@@ -33,6 +33,8 @@ class BalanceBotEnv(gym.Env):
         alive_bonus=1.0, 
         pitch_penalty_coef=5.0, 
         action_penalty_coef=0.01,
+        position_penalty_coef=0.01,
+        yaw_penalty_coef=0.1,
         tip_threshold_deg=30.0,
     ):
         """
@@ -52,6 +54,10 @@ class BalanceBotEnv(gym.Env):
             alive_bonus (float): Reward given each step the robot stays upright,
             pitch_penalty_coef (float): Scales the pitch^2 penalty, encourage staying upright
             action_penalty_coef (float): Scales the action^2 penalty, discourage jittery motion
+            position_penalty_coef (float): Scales the position penalty (x^2 + y^2), discourages
+                                           drifting from the starting position
+            yaw_penalty_coef (float): Scales the abs(yaw_rate) penalty, discourages spinning around
+                                      the Z axis
             tip_threshold_deg (float): Angle (degrees) in which the robot is considered tipped
         """
         # Load model into MuJoCo and get simulation state
@@ -65,8 +71,8 @@ class BalanceBotEnv(gym.Env):
         self.alpha = alpha
 
         # Store sensor names
-        self.sensor_imu_accel      = sensor_imu_accel
-        self.sensor_imu_gyro       = sensor_imu_gyro
+        self.sensor_imu_accel = sensor_imu_accel
+        self.sensor_imu_gyro = sensor_imu_gyro
         self.sensor_left_wheel_vel = sensor_left_wheel_vel
         self.sensor_right_wheel_vel = sensor_right_wheel_vel
 
@@ -98,6 +104,8 @@ class BalanceBotEnv(gym.Env):
         self.alive_bonus = alive_bonus
         self.pitch_penalty_coef = pitch_penalty_coef
         self.action_penalty_coef = action_penalty_coef
+        self.position_penalty_coef = position_penalty_coef
+        self.yaw_penalty_coef = yaw_penalty_coef
 
         # Save tip threshold
         self.tip_threshold_deg = tip_threshold_deg
@@ -197,13 +205,21 @@ class BalanceBotEnv(gym.Env):
         obs = self._get_obs()
         pitch = obs[0]
 
-        # Reward function: alive - (A*pitch^2) - (B*action^2)
-        #   alive: reward for staying alive longer
-        #   pitch: penalty for not staying upright
-        #   action: penalty for making lots of movement (discourage jitter)
+        # Reward function: alive - (A*pitch^2) - (B*action^2) - (C*(x^2 + y^2)) - D*abs(yaw)
+        # Note: qpos (simulation state) only available during training
+        #   alive: reward for staying upright each step
+        #   pitch: penalty for leaning
+        #   action: penalty for jittery motor commands
+        #   position: penalty for drifting from the starting position
+        #   yaw: penalty for rotating around Z axis
         pitch_penalty = self.pitch_penalty_coef * pitch**2
         action_penalty = self.action_penalty_coef * np.sum(action**2)
-        reward = self.alive_bonus - pitch_penalty - action_penalty
+        x_pos = self.data.qpos[0]
+        y_pos = self.data.qpos[1]
+        position_penalty = self.position_penalty_coef * (x_pos**2 + y_pos**2)
+        yaw_rate = self.data.qvel[5]
+        yaw_penalty = self.yaw_penalty_coef * abs(yaw_rate)
+        reward = self.alive_bonus - pitch_penalty - action_penalty - position_penalty - yaw_penalty
 
         # Termination (if robot tips or we run out of time in the episode)
         terminated = abs(pitch) > math.radians(self.tip_threshold_deg)
