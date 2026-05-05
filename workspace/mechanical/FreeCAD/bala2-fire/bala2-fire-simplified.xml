@@ -24,7 +24,7 @@
        timestep: time between measurement/control steps in simulator
        gravity: gravitational acceleration vector
        integrator: algorithm used to compute positions/velocities -->
-  <option timestep="0.002"
+  <option timestep="0.005"
           gravity="0 0 -9.81"
           integrator="implicitfast"/>
 

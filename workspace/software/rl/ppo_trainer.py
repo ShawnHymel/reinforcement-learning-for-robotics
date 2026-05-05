@@ -335,49 +335,60 @@ def build_mlp(input_size, output_size, num_hidden_layers, hidden_layer_size, out
 
 def export_tb_plots_as_csv(run_path):
     """
-    Export a TensorBoard plots to a single CSV file, which is saved in the run directory.
-
-    Args:
-        run_path (Path or str): path to the TensorBoard run directory
-    """
-    from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
-    import csv
+    Export TensorBoard plots to CSV files in a subprocess to avoid LLVM conflict.
     
-    # Get the tags from the TensorBoard run
-    run_path = Path(run_path)
-    ea = EventAccumulator(str(run_path))
-    ea.Reload()
-    tags = ea.Tags()['scalars']
-    if not tags:
-        print(f"No scalar tags found in {run_path}")
-        return
+    Args:
+        run_path (Path or str): location of TensorBoard run
+    """
+    import subprocess
+    import sys
 
-    # Group tags by prefix (e.g. "charts", "losses", "eval")
-    groups = {}
-    for tag in tags:
-        prefix = tag.split('/')[0]
-        groups.setdefault(prefix, []).append(tag)
+    # Write the export script as a string and run it in a fresh Python process
+    # Note: this is a workaround! TensorFlow/Board's LLVM JIT compiler conflicts with MuJoCo's
+    # and will cause a crash if run in the same environment
+    script = f"""
+from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
+import csv
+from pathlib import Path
 
-    # Export one CSV per group
-    for group, group_tags in groups.items():
-        data = {}
-        all_steps = set()
-        for tag in group_tags:
-            events = ea.Scalars(tag)
-            data[tag] = {e.step: e.value for e in events}
-            all_steps.update(data[tag].keys())
+run_path = Path(r"{run_path}")
+ea = EventAccumulator(str(run_path))
+ea.Reload()
+tags = ea.Tags()['scalars']
 
-        output_path = run_path / f"{group}_metrics.csv"
-        with open(output_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            # Use short column names (strip the group prefix)
-            short_names = [t.split('/', 1)[1] for t in group_tags]
-            writer.writerow(['step'] + short_names)
-            for step in sorted(all_steps):
-                row = [step] + [data[tag].get(step, '') for tag in group_tags]
-                writer.writerow(row)
+groups = {{}}
+for tag in tags:
+    prefix = tag.split('/')[0]
+    groups.setdefault(prefix, []).append(tag)
 
-        print(f"Exported {run_path}/{group}_metrics.csv ({len(group_tags)} metrics, {len(all_steps)} steps)")
+for group, group_tags in groups.items():
+    data = {{}}
+    all_steps = set()
+    for tag in group_tags:
+        events = ea.Scalars(tag)
+        data[tag] = {{e.step: e.value for e in events}}
+        all_steps.update(data[tag].keys())
+
+    output_path = run_path / f"{{group}}_metrics.csv"
+    with open(output_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        short_names = [t.split('/', 1)[1] for t in group_tags]
+        writer.writerow(['step'] + short_names)
+        for step in sorted(all_steps):
+            row = [step] + [data[tag].get(step, '') for tag in group_tags]
+            writer.writerow(row)
+    print(f"Exported {{group}}_metrics.csv ({{len(group_tags)}} metrics, {{len(all_steps)}} steps)")
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True
+    )
+    if result.stdout:
+        print(result.stdout.strip())
+    if result.returncode != 0:
+        print(f"Export error: {result.stderr.strip()}")
 
 def evaluate(
     agent,
@@ -477,7 +488,7 @@ def evaluate(
 
     return episodic_returns
 
-def train(config: PPOConfig, envs=None):
+def train(config: PPOConfig, envs=None, agent=None):
     """
     Train a PPO agent.
 
@@ -485,6 +496,7 @@ def train(config: PPOConfig, envs=None):
         config (PPOConfig): Filled out PPOConfig object (see above for member documentation)
         envs (SyncVectorEnv): Pass in a vector of custom gym environments (if None, set 
                               config.env_id to choose an existing one)
+        agent (Agent): Existing agent to further train (warm-start). Set to None to create a new agent.
     """
     # Compute batch size, minibatch size, and total number of iterations
     config.batch_size = int(config.num_envs * config.num_steps)
@@ -564,8 +576,14 @@ def train(config: PPOConfig, envs=None):
     assert isinstance(envs.single_action_space, gym.spaces.Box), \
         "only continuous action space is supported"
 
-    # Create an agent (initialize actor/critic networks) and set optimizer function
-    agent = Agent(envs, config).to(device)
+    # Create a fresh agent or warm-start from a provided one
+    if agent is None:
+        agent = Agent(envs, config).to(device)
+    else:
+        # Move to correct device in case it came from a different training run
+        agent = agent.to(device)
+    
+    # Always create a fresh optimizer (resets learning rate to initial value)
     optimizer = optim.Adam(agent.parameters(), lr=config.learning_rate, eps=1e-5)
 
     # Pre-allocate storage tensors for one full rollout of experience
