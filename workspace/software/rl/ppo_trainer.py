@@ -157,21 +157,21 @@ class Agent(nn.Module):
         # Critic: takes observation and outputs single number estimating the expected cumulative
         # reward starting from this particular state. Tanh keeps activations bounded [-1, 1].
         self.critic = build_mlp(
-            input_size = obs_size,
-            output_size = 1,
-            num_hidden_layers = config.critic_hidden_layers,
-            hidden_layer_size = config.critic_hidden_size,
-            output_std = 1.0,
+            input_size=obs_size,
+            output_size=1,
+            num_hidden_layers=config.critic_hidden_layers,
+            hidden_layer_size=config.critic_hidden_size,
+            output_std=1.0,
         )
 
         # Actor means: takes observation and outputs the means of Gaussian distributions over the 
         # various actions that should maximize the expected return from a given state (observation)
         self.actor_mean = build_mlp(
-            input_size = obs_size,
-            output_size = action_size,
-            num_hidden_layers = config.actor_hidden_layers,
-            hidden_layer_size = config.actor_hidden_size,
-            output_std = 0.01,
+            input_size=obs_size,
+            output_size=action_size,
+            num_hidden_layers=config.actor_hidden_layers,
+            hidden_layer_size=config.actor_hidden_size,
+            output_std=0.01,
         )
         
         # Actor log standard deviations: learnable log(standard deviation) of the action
@@ -333,6 +333,65 @@ def build_mlp(input_size, output_size, num_hidden_layers, hidden_layer_size, out
 
     return nn.Sequential(*layers)
 
+def export_actor_onnx(
+    model_path, 
+    output_path, 
+    obs_size, 
+    action_size, 
+    num_hidden_layers, 
+    hidden_layer_size,
+    onnx_opset_version=18,
+):
+    """
+    Export the actor network from a saved model to ONNX format for deployment. Only the actor is exported, as the critic
+    is needed for training only.
+
+    Args:
+        model_path (Path): path to saved .cleanrl_model file
+        output_path (Path): path to write the .onnx file
+        obs_size (int): number of observations (input size)
+        action_size (int): number of actions (output size)
+        num_hidden_layers (int): number of hidden layers in actor network
+        hidden_layer_size (int): number of nodes per hidden layer
+        onnx_opset_version (int): which verion of the ONNX opset to support
+    """
+    import torch
+
+    # Build the actor network architecture
+    actor = build_mlp(
+        input_size=obs_size,
+        output_size=action_size,
+        num_hidden_layers=num_hidden_layers,
+        hidden_layer_size=hidden_layer_size,
+        output_std=0.01, # Note: Will be overwritten when weights are loaded
+    )
+
+    # Load actor weights from the saved agent state dict
+    state_dict = torch.load(model_path, map_location="cpu", weights_only=True)
+    actor_weights = {
+        k.replace("actor_mean.", ""): v
+        for k, v in state_dict.items()
+        if k.startswith("actor_mean.")
+    }
+    actor.load_state_dict(actor_weights)
+    actor.eval()
+
+    # Export to ONNX
+    dummy_obs = torch.zeros(1, obs_size)
+    torch.onnx.export(
+        actor,
+        dummy_obs,
+        output_path,
+        opset_version=onnx_opset_version,
+        input_names=["observation"],
+        output_names=["action"],
+        dynamic_axes={
+            "observation": {0: "batch_size"},
+            "action": {0: "batch_size"},
+        }
+    )
+    print(f"Actor exported to ONNX: {output_path}")
+
 def export_tb_plots_as_csv(run_path):
     """
     Export TensorBoard plots to CSV files in a subprocess to avoid LLVM conflict.
@@ -345,7 +404,7 @@ def export_tb_plots_as_csv(run_path):
 
     # Write the export script as a string and run it in a fresh Python process
     # Note: this is a workaround! TensorFlow/Board's LLVM JIT compiler conflicts with MuJoCo's
-    # and will cause a crash if run in the same environment
+    # and will cause a crash if run in the same process, so we run this export as a subprocess.
     script = f"""
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 import csv
@@ -895,11 +954,11 @@ def train(config: PPOConfig, envs=None, agent=None):
     final_model_path = checkpoint_dir / f"{config.exp_name}_final.cleanrl_model"
 
     return TrainResult(
-        agent = agent,
-        checkpoint_dir = checkpoint_dir,
-        best_model_path = best_model_path if best_model_path.exists() else None,
-        final_model_path = final_model_path if final_model_path.exists() else None,
-        best_mean_return = best_mean_return,
+        agent=agent,
+        checkpoint_dir=checkpoint_dir,
+        best_model_path=best_model_path if best_model_path.exists() else None,
+        final_model_path=final_model_path if final_model_path.exists() else None,
+        best_mean_return=best_mean_return,
     )
 
 #-------------------------------------------------------------------------------
