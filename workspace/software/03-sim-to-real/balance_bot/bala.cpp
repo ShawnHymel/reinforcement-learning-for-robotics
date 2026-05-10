@@ -1,3 +1,13 @@
+/**
+ * Original Bala 2 interface by M5Stack:
+ * https://github.com/m5stack/M5-ProductExampleCodes/blob/master/Application/Bala2/bala.cpp
+ *
+ * Updated to use raw I2C writes (via Arduino Wire library) instead of the M5Stack library.
+ * 
+ * Modified by Shawn Hymel
+ * Date: May 9, 2026
+ */
+
 #include "bala.h"
 #include <Wire.h>
 
@@ -123,4 +133,3 @@ void Bala::SetServoPulse(uint8_t pos, uint16_t width) {
   i2c_write(REG_SERVO_PWM | pos, buff_out, 2);
   if(i2c_mutex != NULL) { xSemaphoreGive(i2c_mutex); }
 }
-
