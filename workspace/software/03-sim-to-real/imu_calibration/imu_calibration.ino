@@ -4,7 +4,7 @@
  * M5Unified > Basic > Imu to see accel/gyro graphs.
  */
 
-#include <M5Unified.h>
+#include "M5Unified.h"
 
 // Settings
 static const uint8_t GYRO_CALIB_STR = 100; // Gyro calibration strength (0=disabled, 255=strongest)
@@ -12,14 +12,12 @@ static const uint32_t GYRO_CALIB_SEC = 10; // How long to hold still for gyro ca
 static const uint8_t ACCEL_CALIB_STR = 100; // Accel calibration strenth
 static const uint32_t ACCEL_CALIB_SEC = 3; // How long to hold each face down
 static const uint8_t NUM_FACES = 6; // Number of faces
-static const String FACES[] = {
-  "top",
-  "front",
-  "left",
-  "back",
-  "right",
-  "bottom",
-};
+static const String FACES[] = {"top",
+                               "front",
+                               "left",
+                               "back",
+                               "right",
+                               "bottom"};
 
 void setup() {
   float offset;
