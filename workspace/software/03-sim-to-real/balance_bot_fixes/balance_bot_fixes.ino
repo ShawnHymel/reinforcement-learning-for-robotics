@@ -6,6 +6,10 @@
 
 // Settings
 #define DEBUG 0                         // Enable debug printing on intervals (can affect motion!)
+const float PITCH_OFFSET = -0.005f;     // Tune this so the robot stays upright (+: back bias, -: front bias)
+const float MOTOR_BOOST = 1.5f;         // Tune this so the motors are responsive on battery power
+const float ACTION_DEADBAND = 0.02f;    // Tune this: Ignore small motor corrections
+const float ACTION_ALPHA = 0.90f;       // Tune this: alpha for low-pass filter (higher: smoother, more lag)
 const float COMP_ALPHA = 0.99f;         // Alpha for complementary filter (must match training)
 const float TIMESTEP = 0.005f;          // Time (sec) between intervals
 const float MOTOR_SCALE = 1023.0f;      // Scale motors from [-1, 1] to [-1023, 1023]
@@ -26,6 +30,7 @@ float pitch = 0.0f;
 int32_t prev_enc_left = 0;
 int32_t prev_enc_right = 0;
 bool tipped = false;
+float action_filtered[2] = {0.0f, 0.0f};
 
 void setup() {
   bool m5_ret;
@@ -103,7 +108,7 @@ void loop() {
     // Build observation vector (much match training order):
     // [pitch, pitch_rate, wheel_vel_left, wheel_vel_right]
     float obs[ACTOR_OBS_SIZE] = {
-      pitch,
+      pitch + PITCH_OFFSET,
       pitch_rate,
       wheel_vel_left,
       wheel_vel_right
@@ -117,9 +122,22 @@ void loop() {
     action[0] = constrain(action[0], -1.0f, 1.0f);
     action[1] = constrain(action[1], -1.0f, 1.0f);
 
+    // Use a low-pass filter to smooth out the motor commands
+    action_filtered[0] = (ACTION_ALPHA * action_filtered[0]) + 
+                         ((1.0f - ACTION_ALPHA) * action[0]);
+    action_filtered[1] = (ACTION_ALPHA * action_filtered[1]) +
+                         ((1.0f - ACTION_ALPHA) * action[1]);
+
+    // Apply action deadband to prevent small movements
+    float action_motors[2];
+    action_motors[0] = (fabs(action_filtered[0]) < ACTION_DEADBAND) ? 0.0f : action_filtered[0];
+    action_motors[1] = (fabs(action_filtered[1]) < ACTION_DEADBAND) ? 0.0f : action_filtered[1];
+
     // Calculate actual motor values from normalized values (boost if needed)
-    int16_t motor_left = MOTOR_DIR_LEFT * (int16_t)(action[0] * MOTOR_SCALE);
-    int16_t motor_right = MOTOR_DIR_RIGHT * (int16_t)(action[1] * MOTOR_SCALE);
+    int16_t motor_left = MOTOR_DIR_LEFT * 
+                          (int16_t)(action_motors[0] * MOTOR_SCALE * MOTOR_BOOST);
+    int16_t motor_right = MOTOR_DIR_RIGHT * 
+                          (int16_t)(action_motors[1] * MOTOR_SCALE* MOTOR_BOOST);
 
     // Set motor speed based on inference results
     bala.SetSpeed(motor_left, motor_right);
@@ -130,6 +148,11 @@ void loop() {
     // Wait for someone to pick the bot up
     if (fabsf(pitch) <= 0.3) {
       tipped = false;
+
+      // Reset the tip sensor pitch and filters
+      pitch = 0.0f;
+      action_filtered[0] = 0.0f;
+      action_filtered[1] = 0.0f;
 
       // Reset the encoder counters
       bala.ClearEncoder();
