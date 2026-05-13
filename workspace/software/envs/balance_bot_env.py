@@ -1,3 +1,11 @@
+"""
+Gymnasium wrapper for MuJoCo simulator that loads and runs the environment for a simple 2-wheel
+balance bot.
+
+Author: Shawn Hymel
+Date: April 28, 2026
+"""
+
 # Standard libraries
 import math
 from pathlib import Path
