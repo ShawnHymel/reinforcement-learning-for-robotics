@@ -43,15 +43,15 @@ class DomainRandomConfig:
         friction_scale_range: (min, max) scaling factor for ground friction each episode. Simulates
                               different floor surfaces.
     """
-    obs_noise_std_dev: float = 0.01    # Standard deviation of Gaussian noise on observations
-    action_delay_steps: int = 1        # Number of steps to delay actions (0=disabled)
-    action_delay_random: bool = True   # Randomize delay 0 to action_delay_steps
-    motor_noise_scale: float = 0.02    # Uniform noise on motor commands
-    push_prob: float = 0.005           # Probability of random push on each step
-    push_force_max_n: float = 0.5      # Max push forch (Newtons)
-    mass_scale_range: tuple = (0.8, 1.2)        # Vary mass within these bounds
-    friction_scale_range: tuple = (0.5, 1.5)    # Vary friction within these bounds
-    motor_gain_range: tuple = (0.6, 1.0)        # Simulate motor torque variance (e.g. battery sag)
+    obs_noise_std_dev: float = 0.00    # Standard deviation of Gaussian noise on observations
+    action_delay_steps: int = 0        # Number of steps to delay actions (0=disabled)
+    action_delay_random: bool = False   # Randomize delay 0 to action_delay_steps
+    motor_noise_scale: float = 0.0    # Uniform noise on motor commands
+    push_prob: float = 0.00           # Probability of random push on each step
+    push_force_max_n: float = 0.0      # Max push forch (Newtons)
+    mass_scale_range: tuple = (1.0, 1.0)        # Vary mass within these bounds
+    friction_scale_range: tuple = (1.0, 1.0)    # Vary friction within these bounds
+    motor_gain_range: tuple = (1.0, 1.0)        # Simulate motor torque variance (e.g. battery sag)
     
 
 class BalanceBotEnv(gym.Env):
@@ -269,8 +269,8 @@ class BalanceBotEnv(gym.Env):
                 self.dr.motor_gain_range[0],
                 self.dr.motor_gain_range[1],
             )
-            self.motor.actuator_gear[self.left_motor_id, 0] = scale * self._left_gear_orig
-            self.motor.actuator_gear[self.right_motor_id, 0] = scale * self._right_gear_orig
+            self.model.actuator_gear[self.left_motor_id, 0] = scale * self._left_gear_orig
+            self.model.actuator_gear[self.right_motor_id, 0] = scale * self._right_gear_orig
 
         # Reset the simulator
         mujoco.mj_resetData(self.model, self.data)
