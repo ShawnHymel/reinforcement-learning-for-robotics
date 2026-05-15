@@ -25,11 +25,16 @@ class DomainRandomConfig:
     """
     Configuration for domain randomization in BalanceBotEnv. Pass an instance to BalanceBotEnv's
     domain_rand parameter to enable.  All values default to disabled (0.0, False, or identity 
-    ranges).
+    ranges). Note that the defaults are set to disable domain randomization. The caller must
+    configure DR as needed.
     
     Attributes:
-        obs_noise_std_dev: Standard deviation of Gaussian noise added to observations. Simulates 
-                           IMU noise and encoder quantization.
+        pitch_noise_std_dev: Standard deviation of Gaussian noise added to pitch observation. 
+                             Simulates IMU noise.
+        pitch_rate_noise_std_dev: Standard deviation of Gaussian noise added to pitch rate
+                                  observation. Simulates IMU noise.
+        wheel_vel_noise_std_dev:  Standard deviation of Gaussian noise added to wheel velocity
+                                  observation. Simulates encoder noise.
         action_delay_steps: Number of steps to delay actions (0=disabled). Simulates I2C and motor 
                             response latency.
         action_delay_random: If True, randomize delay 0..action_delay_steps each episode.
@@ -38,21 +43,29 @@ class DomainRandomConfig:
         push_prob: Probability per step of applying a random external force. Simulates bumps, 
                    nudges, and uneven terrain effects.
         push_force_max_n: Maximum magnitude of random push force in Newtons.
-        mass_scale_range: (min, max) scaling factor for chassis mass each episode. Simulates payload
+        mass_scale_range: (min, max) Scaling factor for chassis mass each episode. Simulates payload
                           variation and model uncertainty.
-        friction_scale_range: (min, max) scaling factor for ground friction each episode. Simulates
+        friction_scale_range: (min, max) Scaling factor for ground friction each episode. Simulates
                               different floor surfaces.
+        ridge_prob: Probability of applying a random torque to the wheel axles to simulate the tire
+                    ridges hitting the ground
+        ridge_torque_max_nm: Max random torque to apply to axles (N-m)
     """
-    obs_noise_std_dev: float = 0.01    # Standard deviation of Gaussian noise on observations
-    action_delay_steps: int = 1        # Number of steps to delay actions (0=disabled)
-    action_delay_random: bool = True   # Randomize delay 0 to action_delay_steps
-    motor_noise_scale: float = 0.02    # Uniform noise on motor commands
-    push_prob: float = 0.005           # Probability of random push on each step
-    push_force_max_n: float = 0.5      # Max push forch (Newtons)
-    mass_scale_range: tuple = (0.8, 1.2)        # Vary mass within these bounds
-    friction_scale_range: tuple = (0.5, 1.5)    # Vary friction within these bounds
-    motor_gain_range: tuple = (0.6, 1.0)        # Simulate motor torque variance (e.g. battery sag)
-    
+    pitch_noise_std_dev: float = 0.0   # Std dev of Gaussian noise added to pitch observation
+    pitch_rate_noise_std_dev: float = 0.0   # Std dev of Gaussian noise added to pitch rate
+    wheel_vel_noise_std_dev: float = 0.0    # Std dev of Gaussian noise added to wheel velocities
+    obs_noise_std_dev: float = 0.0     # Standard deviation of Gaussian noise on observations
+    action_delay_steps: int = 0        # Number of steps to delay actions (0=disabled)
+    action_delay_random: bool = False  # Randomize delay 0 to action_delay_steps
+    motor_noise_scale: float = 0.0     # Uniform noise on motor commands
+    motor_gain_range: tuple = (1.0, 1.0)        # Simulate motor torque variance (e.g. battery sag)
+    push_prob: float = 0.0             # Probability of random push on each step
+    push_force_max_n: float = 0.0      # Max push forch (Newtons)
+    mass_scale_range: tuple = (1.0, 1.0)        # Vary mass within these bounds
+    friction_scale_range: tuple = (1.0, 1.0)    # Vary friction within these bounds
+    ridge_prob: float = 0.0             # Probability of tire "ridge" (random force on axle)
+    ridge_torque_max_nm: float = 0.0    # Max random torque on axle (N-m)
+
 
 class BalanceBotEnv(gym.Env):
     """
@@ -128,7 +141,19 @@ class BalanceBotEnv(gym.Env):
         )
         assert self._chassis_id != -1, "Body 'chassis' not found in MJCF"
 
+        # Get DOF index to left wheel joint
+        left_wheel_joint_id  = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_JOINT, "wheel_left_joint"
+        )
+        assert left_wheel_joint_id !=-1, "Joint 'wheel_left_joint' not found in MJCF"
+        self._left_wheel_dof_idx = self.model.jnt_dofadr[left_wheel_joint_id]
 
+        # Get DOF index to right wheel joint
+        right_wheel_joint_id  = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_JOINT, "wheel_right_joint"
+        )
+        assert right_wheel_joint_id !=-1, "Joint 'wheel_right_joint' not found in MJCF"
+        self._right_wheel_dof_idx = self.model.jnt_dofadr[right_wheel_joint_id]
 
         # Set render mode
         self.render_mode = render_mode
@@ -226,10 +251,16 @@ class BalanceBotEnv(gym.Env):
         # Construct initial observation
         obs = np.array([self._pitch, pitch_rate, wheel_vel_left, wheel_vel_right], dtype=np.float32)
 
-        # Add Gaussian observation noise (if domain randomization is enabled)
-        if self.dr is not None and self.dr.obs_noise_std_dev > 0.0:
-            noise = self.np_random.normal(0.0, self.dr.obs_noise_std_dev, size=obs.shape)
-            obs = (obs + noise).astype(np.float32)
+        # Optionally add Gaussian noise to observations
+        if self.dr is not None:
+            if self.dr.pitch_noise_std_dev > 0.0:
+                obs[0] += self.np_random.normal(0.0, self.dr.pitch_noise_std_dev)
+            if self.dr.pitch_rate_noise_std_dev > 0.0:
+                obs[1] += self.np_random.normal(0.0, self.dr.pitch_rate_noise_std_dev)
+            if self.dr.wheel_vel_noise_std_dev > 0.0:
+                obs[2] += self.np_random.normal(0.0, self.dr.wheel_vel_noise_std_dev)
+                obs[3] += self.np_random.normal(0.0, self.dr.wheel_vel_noise_std_dev)
+
 
         return obs
 
@@ -269,8 +300,13 @@ class BalanceBotEnv(gym.Env):
                 self.dr.motor_gain_range[0],
                 self.dr.motor_gain_range[1],
             )
-            self.motor.actuator_gear[self.left_motor_id, 0] = scale * self._left_gear_orig
-            self.motor.actuator_gear[self.right_motor_id, 0] = scale * self._right_gear_orig
+            self.model.actuator_gear[self.left_motor_id, 0] = scale * self._left_gear_orig
+            self.model.actuator_gear[self.right_motor_id, 0] = scale * self._right_gear_orig
+
+        # Clear any applied forces
+        self.data.xfrc_applied[self._chassis_id, :] = 0.0
+        self.data.qfrc_applied[self._left_wheel_dof_idx]  = 0.0
+        self.data.qfrc_applied[self._right_wheel_dof_idx] = 0.0
 
         # Reset the simulator
         mujoco.mj_resetData(self.model, self.data)
@@ -337,6 +373,11 @@ class BalanceBotEnv(gym.Env):
         self.data.ctrl[self.left_motor_id]  = action[0]
         self.data.ctrl[self.right_motor_id] = action[1]
 
+        # Clear any applied forces before randomly adding them (if enabled)
+        self.data.xfrc_applied[self._chassis_id, :] = 0.0
+        self.data.qfrc_applied[self._left_wheel_dof_idx]  = 0.0
+        self.data.qfrc_applied[self._right_wheel_dof_idx] = 0.0
+
         # Apply random external force (push) to chassis in X and Y directions
         if self.dr is not None and self.dr.push_prob > 0.0:
             if self.np_random.random() < self.dr.push_prob:
@@ -353,9 +394,23 @@ class BalanceBotEnv(gym.Env):
                 # Apply push to chassis
                 self.data.xfrc_applied[self._chassis_id, 0] = push_x
                 self.data.xfrc_applied[self._chassis_id, 1] = push_y
-            else:
-                # Clear forces
-                self.data.xfrc_applied[self._chassis_id, :] = 0.0
+
+        # Apply random torque to the axles to simulate the tire ridges hitting the ground
+        if self.dr is not None and self.dr.ridge_prob > 0.0:
+            if self.np_random.random() < self.dr.ridge_prob:
+                # Get random torques between -max and +max
+                ridge_torque_left  = self.np_random.uniform(
+                    -self.dr.ridge_torque_max_nm,
+                    self.dr.ridge_torque_max_nm
+                )
+                ridge_torque_right = self.np_random.uniform(
+                    -self.dr.ridge_torque_max_nm,
+                    self.dr.ridge_torque_max_nm
+                )
+
+                # Apply torques
+                self.data.qfrc_applied[self._left_wheel_dof_idx]  = ridge_torque_left
+                self.data.qfrc_applied[self._right_wheel_dof_idx] = ridge_torque_right
 
         # Advance simulation by one step
         mujoco.mj_step(self.model, self.data)

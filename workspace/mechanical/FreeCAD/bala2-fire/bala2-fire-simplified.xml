@@ -155,7 +155,7 @@
                        With a 1:N gearbox, we multiply the inertia by N^2 to get
                        the reflected inertia. So, 5e-8 * 30^2 = 4.5e-5 Kg-m^2.
                        This is ~10x the wheel's inertia, so this dominates. -->
-        <joint name="left_wheel_joint" 
+        <joint name="wheel_left_joint" 
                type="hinge" 
                axis="0 1 0"
                damping="0.001" 
@@ -177,7 +177,7 @@
 
       <!-- Right wheel -->
       <body name="wheel_right" pos="0 -0.04 0">
-        <joint name="right_wheel_joint" 
+        <joint name="wheel_right_joint" 
                type="hinge" 
                axis="0 1 0"
                damping="0.001" 
@@ -209,14 +209,14 @@
          ctrl, so we set the limits to [-1, 1]. With the gear set to 0.05, that
          gives us actual limits of -0.05 to 0.05 N-m, which is a decent estimate
          of our N20 motor with a 1:30 gearbox. --> 
-    <motor name="left_motor"
-           joint="left_wheel_joint" 
+    <motor name="motor_left"
+           joint="wheel_left_joint" 
            gear="0.05"
            ctrlrange="-1 1"/>
 
     <!-- Right motor connected to the right wheel joint -->
-    <motor name="right_motor" 
-           joint="right_wheel_joint" 
+    <motor name="motor_right" 
+           joint="wheel_left_joint" 
            gear="0.05"
            ctrlrange="-1 1"/>
   </actuator>
@@ -234,10 +234,10 @@
     <framequat name="imu_orientation" objtype="site" objname="imu_site"/>
 
     <!-- Wheel encoders (joint position and velocity) -->
-    <jointpos name="left_wheel_pos" joint="left_wheel_joint"/>
-    <jointpos name="right_wheel_pos" joint="right_wheel_joint"/>
-    <jointvel name="left_wheel_vel" joint="left_wheel_joint"/>
-    <jointvel name="right_wheel_vel" joint="right_wheel_joint"/>
+    <jointpos name="left_wheel_pos" joint="wheel_left_joint"/>
+    <jointpos name="right_wheel_pos" joint="wheel_right_joint"/>
+    <jointvel name="left_wheel_vel" joint="wheel_left_joint"/>
+    <jointvel name="right_wheel_vel" joint="wheel_right_joint"/>
   </sensor>
 
 </mujoco>
