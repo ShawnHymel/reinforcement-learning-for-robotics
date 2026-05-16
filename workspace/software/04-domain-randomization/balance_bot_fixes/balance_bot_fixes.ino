@@ -8,7 +8,7 @@
 #define DEBUG 0                         // Enable debug printing on intervals (can affect motion!)
 const float PITCH_OFFSET = 0.00f;     // Tune this so the robot stays upright (+: back bias, -: front bias)
 const float MOTOR_BOOST = 1.0f;         // Tune this so the motors are responsive on battery power
-const float ACTION_DEADBAND = 0.00f;    // Tune this: Ignore small motor corrections
+const float ACTION_DEADBAND = 0.002f;    // Tune this: Ignore small motor corrections
 const float ACTION_ALPHA = 0.0f;       // Tune this: alpha for low-pass filter (higher: smoother, more lag)
 const float COMP_ALPHA = 0.99f;         // Alpha for complementary filter (must match training)
 const float TIMESTEP = 0.005f;          // Time (sec) between intervals
