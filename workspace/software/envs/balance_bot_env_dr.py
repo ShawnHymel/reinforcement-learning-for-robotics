@@ -44,8 +44,8 @@ class DomainRandomConfig:
         push_force_max_n: Maximum magnitude of random push force in Newtons.
         mass_scale_range: (min, max) scaling factor for chassis mass each episode. Simulates payload
                           variation and model uncertainty.
-        friction_scale_range: (min, max) scaling factor for ground friction each episode. Simulates
-                              different floor surfaces.
+        friction_scale_range: (min, max) scaling factor for wheel-to-ground friction each episode.
+                              Simulates different floor surfaces.
         ridge_prob: Probability of applying a random torque to the wheel axles to simulate the tire
                     ridges hitting the ground
         ridge_torque_max_nm: Max random torque to apply to axles (N-m)
@@ -59,7 +59,7 @@ class DomainRandomConfig:
     push_prob: float = 0.00                     # Probability of random push on each step
     push_force_max_n: float = 0.0               # Max push forch (Newtons)
     mass_scale_range: tuple = (1.0, 1.0)        # Vary mass within these bounds
-    friction_scale_range: tuple = (1.0, 1.0)    # Vary friction within these bounds
+    friction_scale_range: tuple = (1.0, 1.0)    # Vary friction (wheel/ground) within these bounds
     motor_gain_range: tuple = (1.0, 1.0)        # Simulate motor torque variance (e.g. battery sag)
     ridge_prob: float = 0.0                     # Probability of tire "ridge" (random force on axle)
     ridge_torque_max_nm: float = 0.0            # Max random torque on axle (N-m)
@@ -325,7 +325,7 @@ class BalanceBotEnv(gym.Env):
         # Reset the step counter
         self._step = 0
 
-        # Reset the domain randomization state
+        # Reset the action delay
         if self.dr is not None:
             # Randomize action delay for this episode
             if self.dr.action_delay_steps > 0 and self.dr.action_delay_random:
