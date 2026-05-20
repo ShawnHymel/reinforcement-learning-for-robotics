@@ -46,23 +46,24 @@ class DomainRandomConfig:
                           variation and model uncertainty.
         friction_scale_range: (min, max) scaling factor for wheel-to-ground friction each episode.
                               Simulates different floor surfaces.
+        motor_gain_range: (min, max) Simulate motor torque variance (e.g. battery sag)
         ridge_prob: Probability of applying a random torque to the wheel axles to simulate the tire
                     ridges hitting the ground
         ridge_torque_max_nm: Max random torque to apply to axles (N-m)
     """
-    pitch_noise_std_dev: float = 0.0            # Std dev of Gaussian noise added to pitch obs
-    pitch_rate_noise_std_dev: float = 0.0       # Std dev of Gaussian noise added to pitch rate obs
-    wheel_vel_noise_std_dev: float = 0.0        # Std dev of Gaussian noise added to wheel vel obs
-    action_delay_steps: int = 0                 # Number of steps to delay actions (0=disabled)
-    action_delay_random: bool = False           # Randomize delay 0 to action_delay_steps
-    motor_noise_scale: float = 0.0              # Uniform noise on motor commands
-    push_prob: float = 0.00                     # Probability of random push on each step
-    push_force_max_n: float = 0.0               # Max push forch (Newtons)
-    mass_scale_range: tuple = (1.0, 1.0)        # Vary mass within these bounds
-    friction_scale_range: tuple = (1.0, 1.0)    # Vary friction (wheel/ground) within these bounds
-    motor_gain_range: tuple = (1.0, 1.0)        # Simulate motor torque variance (e.g. battery sag)
-    ridge_prob: float = 0.0                     # Probability of tire "ridge" (random force on axle)
-    ridge_torque_max_nm: float = 0.0            # Max random torque on axle (N-m)
+    pitch_noise_std_dev: float = 0.0
+    pitch_rate_noise_std_dev: float = 0.0
+    wheel_vel_noise_std_dev: float = 0.0
+    action_delay_steps: int = 0
+    action_delay_random: bool = False
+    motor_noise_scale: float = 0.0
+    push_prob: float = 0.00
+    push_force_max_n: float = 0.0
+    mass_scale_range: tuple = (1.0, 1.0)
+    friction_scale_range: tuple = (1.0, 1.0)
+    motor_gain_range: tuple = (1.0, 1.0)
+    ridge_prob: float = 0.0
+    ridge_torque_max_nm: float = 0.0
     
 
 class BalanceBotEnv(gym.Env):
