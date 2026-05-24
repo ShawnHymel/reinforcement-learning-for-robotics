@@ -83,6 +83,7 @@ class BalanceBotEnv(gym.Env):
     def __init__(
         self,
         mjcf_path="balance_bot.xml",
+        debug=False,
         max_steps=10000,
         render_mode=None,
         alpha=0.99,
@@ -96,10 +97,14 @@ class BalanceBotEnv(gym.Env):
         right_wheel_joint="right_wheel_joint",
         alive_bonus=1.0, 
         pitch_penalty_coef=5.0, 
+        pitch_rate_penalty_coef=0.0,
         action_penalty_coef=0.01,
-        vel_tracking_coef=0.1,
-        yaw_tracking_coef=0.1,
-        vel_max=5.0,
+        smoothness_penalty_coef=0.0,
+        vel_reward_coef=1.0,
+        yaw_reward_coef=1.0,
+        sigma_vel=0.5,
+        sigma_yaw=0.5,
+        vel_max=2.0,
         yaw_max=3.0,
         tip_threshold_deg=30.0,
         domain_rand=None,
@@ -109,6 +114,7 @@ class BalanceBotEnv(gym.Env):
 
         Args:
             mjcf_path (str or Path): Path to the MuJoCo MJCF model file (XML)
+            debug (bool): Whether or not to print out debugging info (e.g. velocity targets)
             max_steps (int): Max number of simulation steps per episode before resetting
             render_mode (str or None): Visual output, one of [None, "human", "rgb_array"]
             alpha (float): Complementary filter coefficient, higher = more gyro, lower = more accel
@@ -122,15 +128,22 @@ class BalanceBotEnv(gym.Env):
             right_wheel_joint (str): MJCF name of the right wheel joint
             alive_bonus (float): Reward given each step the robot stays upright,
             pitch_penalty_coef (float): Scales the pitch^2 penalty, encourage staying upright
+            pitch_rate_penalty_coef (float): Scales the pitch rate penalty, discourage rapid changes
             action_penalty_coef (float): Scales the action^2 penalty, discourage jittery motion
-            vel_tracking_coef (float): Scales the MSE between actual and target forward velocity
-            yaw_tracking_coef (float): Scales the MSE between actual and target yaw rate
-            vel_max (float): Max wheel velocity (rad/s), scales normalized cmd_vel to actual units
+            smoothness_penalty_coef (float): Scales the penalty for changing motor directions
+            sigma_vel (float): Controls velocity tracking tolerance in the exponential reward. 
+                               Smaller values mean less reward when there's an error.
+            sigma_yaw (float): Controls yaw tracking tolerance in the exponential reward. Smaller
+                               values mean less reward when there's an error.
+            vel_max (float): Max forward/back velocity in m/s.
             yaw_max (float): Max yaw rate (rad/s), scales normalized cmd_yaw to actual units
             tip_threshold_deg (float): Angle (degrees) in which the robot is considered tipped
             domain_rand (DomainRandomConfig): Configuration for performing various domain
                                               randomizations (None to disable)
         """
+        # Set debug level
+        self._debug = debug
+
         # Load model into MuJoCo and get simulation state
         self.model = mujoco.MjModel.from_xml_path(str(mjcf_path))
         self.data = mujoco.MjData(self.model)
@@ -210,9 +223,21 @@ class BalanceBotEnv(gym.Env):
         # Save reward coefficients
         self.alive_bonus = alive_bonus
         self.pitch_penalty_coef = pitch_penalty_coef
+        self.pitch_rate_penalty_coef = pitch_rate_penalty_coef
         self.action_penalty_coef = action_penalty_coef
-        self.vel_tracking_coef = vel_tracking_coef
-        self.yaw_tracking_coef = yaw_tracking_coef
+        self.smoothness_penalty_coef = smoothness_penalty_coef
+        self.vel_reward_coef = vel_reward_coef
+        self.yaw_reward_coef = yaw_reward_coef
+
+        # Save the sigmas and check that they are greater than 0
+        self.sigma_vel = sigma_vel
+        if self.sigma_vel <= 0.0:
+            print("Warning: sigma_vel is {sigma_vel}, which must be > 0. Setting to 1e-6.")
+            self.sigma_vel = 1e-6
+        self.sigma_yaw = sigma_yaw
+        if self.sigma_yaw <= 0.0:
+            print("Warning: sigma_yaw is {sigma_yaw}, which must be > 0. Setting to 1e-6.")
+            self.sigma_yaw = 1e-6
 
         # Save max velocity values
         self.vel_max = vel_max
@@ -237,6 +262,9 @@ class BalanceBotEnv(gym.Env):
         # Set current command state
         self._cmd_vel = 0.0
         self._cmd_yaw = 0.0
+
+        # Initialize previous action (used for smoothness penalty)
+        self._prev_action = np.zeros(2, dtype=np.float32)
 
         # Initialize the viewer
         self._viewer = None
@@ -325,6 +353,8 @@ class BalanceBotEnv(gym.Env):
         if self.dr is not None:
             self._cmd_vel = float(self.np_random.uniform(*self.dr.cmd_vel_range))
             self._cmd_yaw = float(self.np_random.uniform(*self.dr.cmd_yaw_range))
+            if self._debug:
+                print(f"New episode: cmd_vel={self._cmd_vel:.3f}, cmd_yaw={self._cmd_yaw:.3f}")
         else:
             self._cmd_vel = 0.0
             self._cmd_yaw = 0.0
@@ -339,6 +369,9 @@ class BalanceBotEnv(gym.Env):
 
         # Reset pitch
         self._pitch = 0.0
+
+        # Initialize previous action (used for smoothness penalty)
+        self._prev_action = np.zeros(2, dtype=np.float32)
 
         # Impart an initial angular velocity around the y axis so the agent learns to recover
         # Note: qvel[4] = wy (rad/s)
@@ -443,6 +476,8 @@ class BalanceBotEnv(gym.Env):
             if self.np_random.random() < self.dr.cmd_resample_prob:
                 self._cmd_vel = float(self.np_random.uniform(*self.dr.cmd_vel_range))
                 self._cmd_yaw = float(self.np_random.uniform(*self.dr.cmd_yaw_range))
+                if self._debug:
+                    print(f"New command: cmd_vel={self._cmd_vel:.3f}, cmd_yaw={self._cmd_yaw:.3f}")
 
         # Advance simulation by one step
         mujoco.mj_step(self.model, self.data)
@@ -451,14 +486,14 @@ class BalanceBotEnv(gym.Env):
         # Get observation
         obs = self._get_obs()
         pitch = obs[0]
+        pitch_rate = obs[1]
 
-        # Penalize leaning and large motor commands
-        pitch_penalty = self.pitch_penalty_coef * pitch**2
-        action_penalty = self.action_penalty_coef * np.sum(action**2)
+        # Get actual forward velocity (privileged info) by projecting world-frame velocity onto the
+        # chassis body frame X axis.
+        xmat = self.data.xmat[self._chassis_id].reshape(3, 3)
+        world_vel = self.data.cvel[self._chassis_id][3:6]
+        vel_actual = float(np.dot(world_vel, xmat[:, 0]))
 
-        # Get actual forward velocity (privileged info) by averaging the wheel speeds together
-        vel_actual = (self.data.qvel[6] + self.data.qvel[7]) / 2.0
-        
         # Get actual yaw rate (privileged info)
         yaw_actual = self.data.qvel[5]
 
@@ -466,17 +501,48 @@ class BalanceBotEnv(gym.Env):
         vel_target = self._cmd_vel * self.vel_max
         yaw_target = self._cmd_yaw * self.yaw_max
 
-        # Use mean square error (MSE) for tracking penalities
-        vel_tracking_penalty = self.vel_tracking_coef * (vel_actual - vel_target) ** 2
-        yaw_tracking_penalty = self.yaw_tracking_coef * (yaw_actual - yaw_target) ** 2
+        # Penalties
+        pitch_penalty = self.pitch_penalty_coef * pitch**2
+        pitch_rate_penalty = self.pitch_rate_penalty_coef * pitch_rate**2
+        action_penalty = self.action_penalty_coef * np.sum(action**2)
+        action_smoothness_penalty = self.smoothness_penalty_coef * \
+            np.sum((action - self._prev_action)**2)
 
-        # Reward function: alive - (A*pitch^2) - (B*action^2) - (C*vel_diff^2) - (D*yaw_diff^2)
-        reward = self.alive_bonus - pitch_penalty - action_penalty - \
-            vel_tracking_penalty - yaw_tracking_penalty
+        # Save previous action
+        self._prev_action = action.copy()
+
+        # Gaussian reward: 1.0 for perfect tracking (no error) and decays smoothly toward 0 as error
+        # grows. Sigma controls how quickly the reward decays with tracking error.
+        vel_tracking_reward = self.vel_reward_coef * \
+            math.exp(-((vel_actual - vel_target) ** 2) / self.sigma_vel)
+        yaw_tracking_reward = self.yaw_reward_coef * \
+            math.exp(-((yaw_actual - yaw_target) ** 2) / self.sigma_yaw)
+
+
+        # Reward function: alive - pitch - pitch_rate - action - smoothness + vel_tracking + 
+        #   yaw_tracking
+        reward = self.alive_bonus \
+            - pitch_penalty \
+            - pitch_rate_penalty \
+            - action_penalty \
+            - action_smoothness_penalty \
+            + vel_tracking_reward\
+            + yaw_tracking_reward
 
         # Termination (if robot tips or we run out of time in the episode)
         terminated = abs(pitch) > math.radians(self.tip_threshold_deg)
         truncated = self._step >= self.max_steps
+
+        # DEBUG: print out command targets and rewards/penalties
+        if self._debug and self._step % 1000 == 0 and self._step > 0:
+            print(f"--- step {self._step} ---")
+            print(f"  cmd_vel={self._cmd_vel:.3f}, vel_target={vel_target:.3f} m/s, vel_actual={vel_actual:.3f} m/s")
+            print(f"  cmd_yaw={self._cmd_yaw:.3f}, yaw_target={yaw_target:.3f} rad/s, yaw_actual={yaw_actual:.3f} rad/s")
+            print(f"  vel_tracking_reward={vel_tracking_reward:.4f} (perfect=1.0)")
+            print(f"  yaw_tracking_reward={yaw_tracking_reward:.4f} (perfect=1.0)")
+            print(f"  pitch={self._pitch:.3f} rad, pitch_penalty={pitch_penalty:.4f}")
+            print(f"  pitch_rate={pitch_rate:.3f} rad/s, pitch_rate_penalty={pitch_rate_penalty:.4f}")
+            print(f"  action_smoothness_penalty={action_smoothness_penalty:.4f}")
 
         return obs, reward, terminated, truncated, {}
 
