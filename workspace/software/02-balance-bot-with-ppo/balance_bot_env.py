@@ -214,7 +214,7 @@ class BalanceBotEnv(gym.Env):
         pitch = obs[0]
 
         # Reward function: alive - (A*pitch^2) - (B*action^2) - (C*(x^2 + y^2)) - D*abs(yaw)
-        # Note: qpos (simulation state) only available during training
+        # Note: qpos (simulation state) and qvel only available during training
         #   alive: reward for staying upright each step
         #   pitch: penalty for leaning
         #   action: penalty for jittery motor commands

@@ -51,6 +51,7 @@ class DomainRandomConfig:
         ridge_torque_max_nm: Max random torque to apply to axles (N-m)
         cmd_vel_range: (min, max) normalized velocity command, e.g. (-1.0, 1.0)
         cmd_yaw_range: (min, max) normalized yaw rate command, e.g. (-1.0, 1.0)
+        cmd_zero_prob: probability of sampling vel/yaw=0 (forces some stillness)
         cmd_resample_prob: probability of sampling a new command each step
     """
     pitch_noise_std_dev: float = 0.0
@@ -68,6 +69,7 @@ class DomainRandomConfig:
     ridge_torque_max_nm: float = 0.0
     cmd_vel_range: tuple = (0.0, 0.0)
     cmd_yaw_range: tuple = (0.0, 0.0)           
+    cmd_zero_prob: float = 0.0
     cmd_resample_prob: float = 0.0
     
 
@@ -350,14 +352,14 @@ class BalanceBotEnv(gym.Env):
             self.model.actuator_gear[self.right_motor_id, 0] = scale * self._right_gear_orig
 
         # Optionally sample a new command for the episode (set to zero if DR not used)
+        self._cmd_vel = 0.0
+        self._cmd_yaw = 0.0
         if self.dr is not None:
-            self._cmd_vel = float(self.np_random.uniform(*self.dr.cmd_vel_range))
-            self._cmd_yaw = float(self.np_random.uniform(*self.dr.cmd_yaw_range))
+            if self.np_random.random() >= self.dr.cmd_zero_prob:
+                self._cmd_vel = float(self.np_random.uniform(*self.dr.cmd_vel_range))
+                self._cmd_yaw = float(self.np_random.uniform(*self.dr.cmd_yaw_range))
             if self._debug:
                 print(f"New episode: cmd_vel={self._cmd_vel:.3f}, cmd_yaw={self._cmd_yaw:.3f}")
-        else:
-            self._cmd_vel = 0.0
-            self._cmd_yaw = 0.0
 
         # Clear any applied forces
         self.data.xfrc_applied[self._chassis_id, :] = 0.0
@@ -474,8 +476,12 @@ class BalanceBotEnv(gym.Env):
         # Optionally resample command mid-episode
         if self.dr is not None and self.dr.cmd_resample_prob > 0.0:
             if self.np_random.random() < self.dr.cmd_resample_prob:
-                self._cmd_vel = float(self.np_random.uniform(*self.dr.cmd_vel_range))
-                self._cmd_yaw = float(self.np_random.uniform(*self.dr.cmd_yaw_range))
+                if self.np_random.random() >= self.dr.cmd_zero_prob:
+                    self._cmd_vel = float(self.np_random.uniform(*self.dr.cmd_vel_range))
+                    self._cmd_yaw = float(self.np_random.uniform(*self.dr.cmd_yaw_range))
+                else:
+                    self._cmd_vel = 0.0
+                    self._cmd_yaw = 0.0
                 if self._debug:
                     print(f"New command: cmd_vel={self._cmd_vel:.3f}, cmd_yaw={self._cmd_yaw:.3f}")
 
