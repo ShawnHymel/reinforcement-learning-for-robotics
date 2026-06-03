@@ -95,19 +95,20 @@ class BalanceBotEnv(gym.Env):
         sensor_right_wheel_vel="right_wheel_vel",
         actuator_left_motor="left_motor",
         actuator_right_motor="right_motor",
-        left_wheel_joint="right_wheel_joint",
+        left_wheel_joint="left_wheel_joint",
         right_wheel_joint="right_wheel_joint",
         alive_bonus=1.0, 
         pitch_penalty_coef=5.0, 
         pitch_rate_penalty_coef=0.0,
         action_penalty_coef=0.01,
+        position_penalty_coef=0.01,
         smoothness_penalty_coef=0.0,
         vel_reward_coef=1.0,
         yaw_reward_coef=1.0,
         sigma_vel=0.5,
         sigma_yaw=0.5,
-        vel_max=2.0,
-        yaw_max=3.0,
+        vel_max=1.0,
+        yaw_max=2.0,
         tip_threshold_deg=30.0,
         domain_rand=None,
     ):
@@ -132,7 +133,13 @@ class BalanceBotEnv(gym.Env):
             pitch_penalty_coef (float): Scales the pitch^2 penalty, encourage staying upright
             pitch_rate_penalty_coef (float): Scales the pitch rate penalty, discourage rapid changes
             action_penalty_coef (float): Scales the action^2 penalty, discourage jittery motion
+            position_penalty_coef (float): Scales the position penalty (x^2 + y^2), discourages
+                                drifting from the starting position
             smoothness_penalty_coef (float): Scales the penalty for changing motor directions
+            vel_reward_coef (flaot): Scales the reward for velocity tracking (how close actual 
+                                     velocity is to target velocity)
+            yaw_reward_coef (float): Scales the reward for yaw tracking (how close actual turn/yaw 
+                                     rate is to target rate)
             sigma_vel (float): Controls velocity tracking tolerance in the exponential reward. 
                                Smaller values mean less reward when there's an error.
             sigma_yaw (float): Controls yaw tracking tolerance in the exponential reward. Smaller
@@ -227,6 +234,7 @@ class BalanceBotEnv(gym.Env):
         self.pitch_penalty_coef = pitch_penalty_coef
         self.pitch_rate_penalty_coef = pitch_rate_penalty_coef
         self.action_penalty_coef = action_penalty_coef
+        self.position_penalty_coef = position_penalty_coef
         self.smoothness_penalty_coef = smoothness_penalty_coef
         self.vel_reward_coef = vel_reward_coef
         self.yaw_reward_coef = yaw_reward_coef
@@ -264,6 +272,7 @@ class BalanceBotEnv(gym.Env):
         # Set current command state
         self._cmd_vel = 0.0
         self._cmd_yaw = 0.0
+        self._cmd_zero_pos = np.array([0.0, 0.0]) 
 
         # Initialize previous action (used for smoothness penalty)
         self._prev_action = np.zeros(2, dtype=np.float32)
@@ -382,6 +391,9 @@ class BalanceBotEnv(gym.Env):
         # Update the state of the robot without taking a full time step
         mujoco.mj_forward(self.model, self.data)
 
+        # Save the robot's x, y location
+        self._cmd_zero_pos = np.array([self.data.qpos[0], self.data.qpos[1]])
+
         # Reset the step counter
         self._step = 0
 
@@ -473,7 +485,7 @@ class BalanceBotEnv(gym.Env):
                 self.data.qfrc_applied[self._left_wheel_dof_idx]  = ridge_torque_left
                 self.data.qfrc_applied[self._right_wheel_dof_idx] = ridge_torque_right
 
-        # Optionally resample command mid-episode
+        # Optionally resample command mid-episode (if vel/yaw=0, save x,y location)
         if self.dr is not None and self.dr.cmd_resample_prob > 0.0:
             if self.np_random.random() < self.dr.cmd_resample_prob:
                 if self.np_random.random() >= self.dr.cmd_zero_prob:
@@ -482,6 +494,7 @@ class BalanceBotEnv(gym.Env):
                 else:
                     self._cmd_vel = 0.0
                     self._cmd_yaw = 0.0
+                    self._cmd_zero_pos = np.array([self.data.qpos[0], self.data.qpos[1]])
                 if self._debug:
                     print(f"New command: cmd_vel={self._cmd_vel:.3f}, cmd_yaw={self._cmd_yaw:.3f}")
 
@@ -513,6 +526,15 @@ class BalanceBotEnv(gym.Env):
         action_penalty = self.action_penalty_coef * np.sum(action**2)
         action_smoothness_penalty = self.smoothness_penalty_coef * \
             np.sum((action - self._prev_action)**2)
+        
+        # Position penalty (from new "stand still" origin)
+        # Only active when commanded to stand still
+        if vel_target == 0.0 and yaw_target == 0.0:
+            x_pos = self.data.qpos[0] - self._cmd_zero_pos[0]
+            y_pos = self.data.qpos[1] - self._cmd_zero_pos[1]
+            position_penalty = self.position_penalty_coef * (x_pos**2 + y_pos**2)
+        else:
+            position_penalty = 0.0
 
         # Save previous action
         self._prev_action = action.copy()
@@ -525,14 +547,22 @@ class BalanceBotEnv(gym.Env):
             math.exp(-((yaw_actual - yaw_target) ** 2) / self.sigma_yaw)
 
 
-        # Reward function: alive - pitch - pitch_rate - action - smoothness + vel_tracking + 
-        #   yaw_tracking
+        # Reward function:
+        #   alive: encourage staying upright (not tipping over)
+        #   pitch: penalty for leaning
+        #   pitch_rate: penalty for rapid pitch changes (encourage smooth transitions)
+        #   action: penalty for large motor commands (discourage aggressive controls)
+        #   smoothness: penalty for changing mootor commands (discourage jitter)
+        #   position: penalty for drifting from origin (only for stationary commands)
+        #   vel_tracking: reward for matching the commanded forward velocity
+        #   yaw_tracking: reward for matching the commanded yaw rate
         reward = self.alive_bonus \
             - pitch_penalty \
             - pitch_rate_penalty \
             - action_penalty \
             - action_smoothness_penalty \
-            + vel_tracking_reward\
+            - position_penalty \
+            + vel_tracking_reward \
             + yaw_tracking_reward
 
         # Termination (if robot tips or we run out of time in the episode)

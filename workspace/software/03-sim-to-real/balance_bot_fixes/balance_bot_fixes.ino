@@ -6,7 +6,7 @@
 
 // Settings
 #define DEBUG 0                         // Enable debug printing on intervals (can affect motion!)
-const float PITCH_OFFSET = -0.005f;     // Tune this so the robot stays upright (+: back bias, -: front bias)
+const float PITCH_OFFSET = -0.01f;     // Tune this so the robot stays upright (+: back bias, -: front bias)
 const float MOTOR_BOOST = 1.5f;         // Tune this so the motors are responsive on battery power
 const float ACTION_DEADBAND = 0.02f;    // Tune this: Ignore small motor corrections
 const float ACTION_ALPHA = 0.90f;       // Tune this: alpha for low-pass filter (higher: smoother, more lag)

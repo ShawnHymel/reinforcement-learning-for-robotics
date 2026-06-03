@@ -87,7 +87,7 @@ class BalanceBotEnv(gym.Env):
         sensor_right_wheel_vel="right_wheel_vel",
         actuator_left_motor="left_motor",
         actuator_right_motor="right_motor",
-        left_wheel_joint="right_wheel_joint",
+        left_wheel_joint="left_wheel_joint",
         right_wheel_joint="right_wheel_joint",
         alive_bonus=1.0, 
         pitch_penalty_coef=5.0, 

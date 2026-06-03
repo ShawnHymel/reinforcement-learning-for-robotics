@@ -14,18 +14,18 @@
 // WiFi settings
 static const char* AP_SSID     = "BalanceBot";
 static const char* AP_PASSWORD = "balancebot";
-static const IPAddress AP_IP      (192, 168,  4,  1);
-static const IPAddress AP_GATEWAY (192, 168,  4,  1);
-static const IPAddress AP_SUBNET  (255, 255, 255,  0);
+static const IPAddress AP_IP      (192, 168, 4, 1);
+static const IPAddress AP_GATEWAY (192, 168, 4, 1);
+static const IPAddress AP_SUBNET  (255, 255, 255, 0);
 
 // Robot settings
-const float VEL_FACTOR = 0.6f;          // Max velocity that was used in training (negative to flip direction)
-const float YAW_FACTOR = -1.0f;         // Max yaw that was used in training (negative to flip direction)
-const float CMD_DEADZONE = 0.05f;       // Thumbstick deadzone (ignore inputs below this value)
-const float PITCH_OFFSET = -0.05f;     // Tune this so the robot stays upright (+: back bias, -: front bias)
+const float VEL_FACTOR = 0.5f;          // Max velocity that was used in training (negative to flip direction)
+const float YAW_FACTOR = -1.5f;         // Max yaw that was used in training (negative to flip direction)
+const float CMD_DEADZONE = 0.0f;        // Thumbstick deadzone (ignore inputs below this value)
+const float PITCH_OFFSET = -0.05f;        // Tune this so the robot stays upright (+: back bias, -: front bias)
 const float MOTOR_BOOST = 1.0f;         // Tune this so the motors are responsive on battery power
-const float ACTION_DEADBAND = 0.0f;    // Tune this: Ignore small motor corrections
-const float ACTION_ALPHA = 0.6f;       // Tune this: alpha for low-pass filter (higher: smoother, more lag)
+const float ACTION_DEADBAND = 0.0f;     // Tune this: Ignore small motor corrections
+const float ACTION_ALPHA = 0.0f;        // Tune this: alpha for low-pass filter (higher: smoother, more lag)
 const float COMP_ALPHA = 0.99f;         // Alpha for complementary filter (must match training)
 const float TIMESTEP = 0.005f;          // Time (sec) between intervals
 const float MOTOR_SCALE = 1023.0f;      // Scale motors from [-1, 1] to [-1023, 1023]
@@ -242,6 +242,10 @@ void loop() {
     cmd_vel = fabsf(cmd_vel) < CMD_DEADZONE ? 0.0f : cmd_vel;
     cmd_yaw = fabsf(cmd_yaw) < CMD_DEADZONE ? 0.0f : cmd_yaw;
 
+    Serial.print(cmd_vel * VEL_FACTOR);
+    Serial.print(",");
+    Serial.println(cmd_yaw * YAW_FACTOR);
+
     // Build observation vector (much match training order):
     // [pitch, pitch_rate, wheel_vel_left, wheel_vel_right, cmd_vel, cmd_yaw]
     float obs[ACTOR_OBS_SIZE] = {
@@ -306,8 +310,8 @@ void loop() {
   }
 
   // Pace to TIMESTEP before printing
-  unsigned long elapsed = micros() - step_start;
-  while (elapsed < (unsigned long)(TIMESTEP * 1e6f));
+  // Serial.println(micros() - step_start);
+  while ((micros() - step_start) < (unsigned long)(TIMESTEP * 1e6f));
 
   // Print diagnostics every few iterations
 #if DEBUG
