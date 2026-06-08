@@ -149,17 +149,17 @@ void loop() {
   // Print diagnostics every few iterations
 #if DEBUG
   if (++print_counter >= 20) {
-  print_counter = 0;
-  int32_t batt_lvl = M5.Power.getBatteryLevel();
-  int16_t batt_mv = M5.Power.getBatteryVoltage();
-  Serial.printf("batt_lvl=%d batt_mv=%d pitch=%.3f rate=%.3f vL=%.2f vR=%.2f tipped=%d\n",
-                batt_lvl, 
-                batt_mv, 
-                pitch, 
-                pitch_rate, 
-                wheel_vel_left, 
-                wheel_vel_right, 
-                (int)tipped);
+    print_counter = 0;
+    int32_t batt_lvl = M5.Power.getBatteryLevel();
+    int16_t batt_mv = M5.Power.getBatteryVoltage();
+    Serial.printf("batt_lvl=%d batt_mv=%d pitch=%.3f rate=%.3f vL=%.2f vR=%.2f tipped=%d\n",
+                  batt_lvl, 
+                  batt_mv, 
+                  pitch, 
+                  pitch_rate, 
+                  wheel_vel_left, 
+                  wheel_vel_right, 
+                  (int)tipped);
   }
 #endif
 }

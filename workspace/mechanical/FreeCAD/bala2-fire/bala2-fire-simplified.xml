@@ -114,8 +114,7 @@
       <!-- Free joint: robot can translate/orient freely in world frame -->
       <freejoint name="root"/>
 
-      <!-- Visual and collision geometry. Made partly transparent to see the IMU
-           site -->
+      <!-- Visual and collision geometry -->
       <geom name="chassis_geom"
             type="mesh"
             mesh="chassis_mesh"
