@@ -13,7 +13,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>BalanceBot</title>
   <style>
+
+    /* Remove browser default styling */
     * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* Plain background */
     body {
       min-height: 100vh;
       display: flex;
@@ -23,7 +27,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       background: #fff;
       user-select: none;
     }
+
+    /* Status (connected) styling */
     #status { font-family: monospace; margin-bottom: 1rem; }
+
+    /* Outer circle for thumbstick */
     #stick-zone {
       position: relative;
       width: 220px;
@@ -34,7 +42,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       touch-action: none;
       cursor: grab;
     }
+
+    /* Define thumbstick area action */
     #stick-zone:active { cursor: grabbing; }
+
+    /* Smaller circle for thumbstick */
     #knob {
       position: absolute;
       width: 72px;
@@ -49,25 +61,33 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     }
   </style>
 </head>
+
+<!-- Page is just status text and the thumbstick -->
 <body>
 <p id="status">not connected</p>
 <div id="stick-zone">
   <div id="knob"></div>
 </div>
+
+<!-- JavaScript -->
 <script>
+  // Get elements
   const zone      = document.getElementById('stick-zone');
   const knob      = document.getElementById('knob');
   const statusEl  = document.getElementById('status');
 
+  // Settings
   const ZONE_R = 110;
   const KNOB_R = 36;
   const MAX_R  = ZONE_R - KNOB_R;
 
+  // Globals
   let active = false;
   let cmdVel = 0, cmdYaw = 0;
   let sendInterval = null;
   let ws;
 
+  // Connect WebSocket back to ESP32
   function connect() {
     ws = new WebSocket('ws://' + location.host + '/ws');
 
@@ -84,19 +104,23 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     };
   }
 
+  // Send thumbstick commands over websocket
   function sendCmd() {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ vel: cmdVel, yaw: cmdYaw }));
     }
   }
 
+  // Connect WebSocket
   connect();
 
+  // Get X and Y of thumbstick center
   function zoneCenter() {
     const r = zone.getBoundingClientRect();
     return { x: r.left + ZONE_R, y: r.top + ZONE_R };
   }
 
+  // Draw knob based on touch location
   function updateKnob(clientX, clientY) {
     const c = zoneCenter();
     let dx = clientX - c.x;
@@ -108,6 +132,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     cmdVel = -parseFloat((dy / MAX_R).toFixed(3));
   }
 
+  // Reset thumbstick to 0, 0 if released
   function release() {
     if (!active) return;
     active = false;
@@ -115,10 +140,12 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     cmdVel = cmdYaw = 0;
   }
 
+  // Add listener if mouse clicks on thumbstick
   zone.addEventListener('mousedown', e => { active = true; updateKnob(e.clientX, e.clientY); });
   window.addEventListener('mousemove', e => { if (active) updateKnob(e.clientX, e.clientY); });
   window.addEventListener('mouseup', release);
 
+  // Add listener if user touches thumbstick
   zone.addEventListener('touchstart', e => { e.preventDefault(); active = true; updateKnob(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
   window.addEventListener('touchmove', e => { if (active) updateKnob(e.touches[0].clientX, e.touches[0].clientY); }, { passive: false });
   window.addEventListener('touchend', release);

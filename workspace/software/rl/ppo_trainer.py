@@ -888,13 +888,21 @@ def train(config: PPOConfig, envs=None, agent=None):
             if early_stop:
                 break
 
+        # Get predicted values from post-update critic
+        with torch.no_grad():
+            y_pred = agent.get_value(b_obs).cpu().numpy().flatten()
+
         # Compute explained variance: measures how much the spread of the actual returns can be
         # accounted for by the critic's predictions (ideally start near 0 early in training and 
-        # climb to 0.9+ for a well-trained critic).
-        y_pred = b_values.cpu().numpy()
+        # climb to 0.9+ for a well-trained critic). Note: if the two variances are both very small,
+        # we asusme that the explained variance is 1 (prevent reporting it as 0).
         y_true = b_returns.cpu().numpy()
         var_y = np.var(y_true)
-        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+        residual_var = np.var(y_true - y_pred)
+        if residual_var < 1e-4 and var_y < 1e-4:
+            explained_var = 1.0
+        else:
+            explained_var = np.nan if var_y < 1e-4 else 1 - (residual_var / var_y)
 
         # Log training metrics to TensorBoard once per iteration
         writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)

@@ -19,10 +19,10 @@ static const IPAddress AP_GATEWAY (192, 168, 4, 1);
 static const IPAddress AP_SUBNET  (255, 255, 255, 0);
 
 // Robot settings
-const float VEL_FACTOR = 0.5f;          // Max velocity that was used in training (negative to flip direction)
-const float YAW_FACTOR = -1.5f;         // Max yaw that was used in training (negative to flip direction)
+const float VEL_FACTOR = 1.0f;          // Scale velocity command if needed (negative to flip direction)
+const float YAW_FACTOR = -1.0f;         // Scale yaw command if needed (negative to flip direction)
 const float CMD_DEADZONE = 0.0f;        // Thumbstick deadzone (ignore inputs below this value)
-const float PITCH_OFFSET = -0.05f;        // Tune this so the robot stays upright (+: back bias, -: front bias)
+const float PITCH_OFFSET = -0.07f;        // Tune this so the robot stays upright (+: back bias, -: front bias)
 const float MOTOR_BOOST = 1.0f;         // Tune this so the motors are responsive on battery power
 const float ACTION_DEADBAND = 0.0f;     // Tune this: Ignore small motor corrections
 const float ACTION_ALPHA = 0.0f;        // Tune this: alpha for low-pass filter (higher: smoother, more lag)
@@ -58,6 +58,7 @@ AsyncWebSocket ws("/ws");
 //******************************************************************************
 // Functions
 
+// Critical section: set global variable vel/yaw commands
 inline void setCommands(float vel, float yaw) {
   portENTER_CRITICAL(&g_cmd_mux);
   g_cmd_vel = vel;
@@ -65,6 +66,7 @@ inline void setCommands(float vel, float yaw) {
   portEXIT_CRITICAL(&g_cmd_mux);
 }
 
+// Critical section: get vel/yaw commands from global variable
 inline void getCommands(float& vel, float& yaw) {
   portENTER_CRITICAL(&g_cmd_mux);
   vel = g_cmd_vel;
@@ -80,24 +82,29 @@ void onWsEvent(AsyncWebSocket* server,
                uint8_t* data,
                size_t len)
 {
+  // Event: WebSocket connected
   if (type == WS_EVT_CONNECT) {
     Serial.printf("[WS] Client #%u connected\n", client->id());
 
+  // Event: WebSocket disconnected
   } else if (type == WS_EVT_DISCONNECT) {
     Serial.printf("[WS] Client #%u disconnected — zeroing commands\n", client->id());
     setCommands(0.0f, 0.0f);
 
+  // Event: received data from WebSocket
   } else if (type == WS_EVT_DATA) {
+    // Parse argument from WebSocket event
     AwsFrameInfo* info = (AwsFrameInfo*)arg;
+
     // Only handle complete, text frames
-    if (info->final && info->index == 0 && info->len == len
-        && info->opcode == WS_TEXT) {
+    if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
       // Null-terminate and parse JSON
       char buf[64];
       size_t copy_len = len < sizeof(buf) - 1 ? len : sizeof(buf) - 1;
       memcpy(buf, data, copy_len);
       buf[copy_len] = '\0';
 
+      // Get vel and yaw values from JSON
       StaticJsonDocument<64> doc;
       if (deserializeJson(doc, buf) == DeserializationError::Ok) {
         float vel = doc["vel"] | 0.0f;
@@ -107,6 +114,7 @@ void onWsEvent(AsyncWebSocket* server,
         vel = constrain(vel, -1.0f, 1.0f);
         yaw = constrain(yaw, -1.0f, 1.0f);
 
+        // Write commands to global variables (to share with other core/thread)
         setCommands(vel, yaw);
       }
     }
@@ -116,26 +124,32 @@ void onWsEvent(AsyncWebSocket* server,
 //******************************************************************************
 // Server thread (Core 0)
 
+// Web server thread that runs on Core 0 (AP and host thumbstick page)
 void serverTask(void* pvParameters) {
   Serial.println("[Core 0] Starting WiFi AP...");
 
+  // Start access point (AP)
   WiFi.softAPConfig(AP_IP, AP_GATEWAY, AP_SUBNET);
   WiFi.softAP(AP_SSID, AP_PASSWORD);
-
   Serial.printf("[Core 0] AP started: SSID=%s  IP=%s\n",
                 AP_SSID,
                 WiFi.softAPIP().toString().c_str());
 
+  // Register WebSocket event handler
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
 
+  // Web server event: serve INDEX_HTML (from PROGMEM)
   server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
     request->send_P(200, "text/html", INDEX_HTML);
   });
+
+  // Web server event: serve 404 error on any other page
   server.onNotFound([](AsyncWebServerRequest* request) {
     request->send(404, "text/plain", "Not found");
   });
 
+  // Start server
   server.begin();
   Serial.println("[Core 0] HTTP + WebSocket server running");
 
@@ -242,19 +256,24 @@ void loop() {
     cmd_vel = fabsf(cmd_vel) < CMD_DEADZONE ? 0.0f : cmd_vel;
     cmd_yaw = fabsf(cmd_yaw) < CMD_DEADZONE ? 0.0f : cmd_yaw;
 
-    Serial.print(cmd_vel * VEL_FACTOR);
-    Serial.print(",");
-    Serial.println(cmd_yaw * YAW_FACTOR);
+    // Scale and clamp actions to [-1, 1]
+    cmd_vel = constrain(cmd_vel * VEL_FACTOR, -1.0f, 1.0f);
+    cmd_yaw = constrain(cmd_yaw * YAW_FACTOR, -1.0f, 1.0f);
 
-    // Build observation vector (much match training order):
+    // Debug info
+    // Serial.print(cmd_vel);
+    // Serial.print(",");
+    // Serial.println(cmd_yaw);
+
+    // Build observation vector (must match training order):
     // [pitch, pitch_rate, wheel_vel_left, wheel_vel_right, cmd_vel, cmd_yaw]
     float obs[ACTOR_OBS_SIZE] = {
       pitch + PITCH_OFFSET,
       pitch_rate,
       wheel_vel_left,
       wheel_vel_right,
-      cmd_vel * VEL_FACTOR,
-      cmd_yaw * YAW_FACTOR
+      cmd_vel,
+      cmd_yaw
     };
 
     // Run inference (actor network forward pass)
@@ -281,6 +300,10 @@ void loop() {
                           (int16_t)(action_motors[0] * MOTOR_SCALE * MOTOR_BOOST);
     int16_t motor_right = MOTOR_DIR_RIGHT * 
                           (int16_t)(action_motors[1] * MOTOR_SCALE* MOTOR_BOOST);
+
+    // Clamp motor speeds
+    motor_left = constrain(motor_left, -1023, 1023);
+    motor_right = constrain(motor_right, -1023, 1023);
 
     // Set motor speed based on inference results
     bala.SetSpeed(motor_left, motor_right);
@@ -309,7 +332,7 @@ void loop() {
     }
   }
 
-  // Pace to TIMESTEP before printing
+  // Busy wait to maintain fixed timestep (must match MJCF timestep!)
   // Serial.println(micros() - step_start);
   while ((micros() - step_start) < (unsigned long)(TIMESTEP * 1e6f));
 

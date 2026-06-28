@@ -516,7 +516,7 @@ class BalanceBotEnv(gym.Env):
         # Get actual yaw rate (privileged info)
         yaw_actual = self.data.qvel[5]
 
-        # Scale normalized commands to actual rates (rad/s)
+        # Scale normalized commands to actual rates
         vel_target = self._cmd_vel * self.vel_max
         yaw_target = self._cmd_yaw * self.yaw_max
 
